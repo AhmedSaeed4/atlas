@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#171916">
+    <meta name="description" content="Turn repository evidence into a clear, interactive architecture map for any software project. Private by default and built for static hosting.">
+    <title>Atlas — software architecture, in view</title>
+    <script src="./src/theme.js"></script>
+    <link rel="stylesheet" href="./theme.css">
+    <link rel="stylesheet" href="./landing.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="landing-shell">
+      <header class="site-header">
+        <div class="header-inner">
+          <a class="brand" href="./" aria-label="Atlas home">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <span>Atlas</span>
+          </a>
+          <nav class="header-nav" aria-label="Main navigation">
+            <a href="#how-it-works">How it works</a>
+            <a href="#privacy">Privacy</a>
+          </nav>
+          <div class="header-actions">
+            <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="true" title="Switch to light theme">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M16.8 12.1A6.8 6.8 0 0 1 7.9 3.2 6.9 6.9 0 1 0 16.8 12.1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+              <span id="theme-value">Dark</span>
+            </button>
+            <a class="button button-primary header-open" href="./workspace.html">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
+          </div>
+        </div>
+      </header>
+
+      <main id="main">
+        <section class="hero content-width" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <p class="eyebrow landing-eyebrow"><span class="eyebrow-dot"></span> SOFTWARE ARCHITECTURE, MADE CLEAR</p>
+            <h1 id="hero-title">See how your<br class="wide-break"> software fits together.</h1>
+            <p class="hero-intro">Atlas turns repository evidence into an interactive architecture map for <strong>any software project</strong>—from a service or desktop app to a library, CLI, or mixed system.</p>
+            <p class="hero-support">Start with the coding agent already working in your project. Then explore, refine, and keep the map in this browser.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="./workspace.html">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
+              <button class="button button-secondary" type="button" data-open-prompt>Copy agent prompt</button>
+            </div>
+            <div class="hero-example">
+              <span>Want a quick look?</span>
+              <a href="./workspace.html?example=flow">Open the sample map <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11m-5-5 5 5-5 5"/></svg></a>
+            </div>
+            <ul class="product-facts" aria-label="Atlas features">
+              <li><span class="fact-dot"></span>Any software project</li>
+              <li><span class="fact-dot"></span>Browser-local maps</li>
+              <li><span class="fact-dot"></span>No account needed</li>
+            </ul>
+          </div>
+
+          <div class="preview-card" aria-labelledby="preview-heading">
+            <div class="preview-card-head">
+              <div>
+                <p class="preview-kicker">A MAP YOU CAN EXPLORE</p>
+                <h2 id="preview-heading">A small system, made visible</h2>
+              </div>
+              <span class="demo-label"><span></span> Illustrative demo</span>
+            </div>
+            <div class="preview-canvas">
+              <svg id="architecture-preview" viewBox="0 0 760 390" role="group" aria-label="Interactive illustrative software architecture map. Focus or hover over a component to read what it represents.">
+                <g class="preview-connectors" aria-hidden="true">
+                  <path d="M222 195 C235 195 239 195 252 195"/>
+                  <path d="M252 195 C267 195 264 89 280 89"/>
+                  <path d="M252 195 C267 195 264 301 280 301"/>
+                  <path d="M466 89 C489 89 506 89 530 89"/>
+                  <path d="M466 301 C489 301 506 301 530 301"/>
+                  <circle class="junction-ring" cx="252" cy="195" r="6"/>
+                  <circle class="junction-core" cx="252" cy="195" r="2.2"/>
+                  <circle class="port" cx="222" cy="195" r="3.5"/>
+                  <circle class="port" cx="280" cy="89" r="3.5"/>
+                  <circle class="port" cx="280" cy="301" r="3.5"/>
+                  <circle class="port" cx="466" cy="89" r="3.5"/>
+                  <circle class="port" cx="530" cy="89" r="3.5"/>
+                  <circle class="port" cx="466" cy="301" r="3.5"/>
+                  <circle class="port" cx="530" cy="301" r="3.5"/>
+                </g>
+                <g class="preview-node is-selected" data-preview-node data-title="Web client" data-kind="ENTRY POINT" data-description="An illustrative starting point for a request into this sample system." role="button" tabindex="0" aria-pressed="true" aria-label="Web client. An illustrative starting point for a request into this sample system." aria-describedby="preview-description">
+                  <rect class="node-card" x="44" y="151" width="178" height="88" rx="15"/>
+                  <circle class="node-icon" cx="68" cy="178" r="11"/><path class="node-symbol" d="M63 178h10M68 173v10"/>
+                  <text class="node-type" x="87" y="181">ENTRY POINT</text>
+                  <text class="node-title" x="62" y="215">Web client</text>
+                  <circle class="node-status" cx="205" cy="171" r="3"/>
+                </g>
+                <g class="preview-node" data-preview-node data-title="API service" data-kind="SERVICE" data-description="An illustrative service that receives a request and routes work." role="button" tabindex="0" aria-pressed="false" aria-label="API service. An illustrative service that receives a request and routes work." aria-describedby="preview-description">
+                  <rect class="node-card" x="280" y="45" width="186" height="88" rx="15"/>
+                  <circle class="node-icon" cx="304" cy="72" r="11"/><path class="node-symbol" d="M300 72h8M304 68v8"/>
+                  <text class="node-type" x="323" y="75">SERVICE</text>
+                  <text class="node-title" x="298" y="109">API service</text>
+                  <circle class="node-status" cx="449" cy="65" r="3"/>
+                </g>
+                <g class="preview-node" data-preview-node data-title="Data store" data-kind="STORAGE" data-description="An illustrative place where the sample system keeps application records." role="button" tabindex="0" aria-pressed="false" aria-label="Data store. An illustrative place where the sample system keeps application records." aria-describedby="preview-description">
+                  <rect class="node-card" x="530" y="45" width="186" height="88" rx="15"/>
+                  <circle class="node-icon" cx="554" cy="72" r="11"/><path class="node-symbol" d="M550 69c0-2 8-2 8 0v6c0 2-8 2-8 0zM550 72c0 2 8 2 8 0"/>
+                  <text class="node-type" x="573" y="75">STORAGE</text>
+                  <text class="node-title" x="548" y="109">Data store</text>
+                  <circle class="node-status" cx="699" cy="65" r="3"/>
+                </g>
+                <g class="preview-node" data-preview-node data-title="Job queue" data-kind="ASYNC WORK" data-description="An illustrative handoff point for work that runs outside the request path." role="button" tabindex="0" aria-pressed="false" aria-label="Job queue. An illustrative handoff point for work that runs outside the request path." aria-describedby="preview-description">
+                  <rect class="node-card" x="280" y="257" width="186" height="88" rx="15"/>
+                  <circle class="node-icon" cx="304" cy="284" r="11"/><path class="node-symbol" d="M300 281h8M300 284h8M300 287h5"/>
+                  <text class="node-type" x="323" y="287">ASYNC WORK</text>
+                  <text class="node-title" x="298" y="321">Job queue</text>
+                  <circle class="node-status" cx="449" cy="277" r="3"/>
+                </g>
+                <g class="preview-node" data-preview-node data-title="Worker" data-kind="PROCESS" data-description="An illustrative background process that handles queued jobs." role="button" tabindex="0" aria-pressed="false" aria-label="Worker. An illustrative background process that handles queued jobs." aria-describedby="preview-description">
+                  <rect class="node-card" x="530" y="257" width="186" height="88" rx="15"/>
+                  <circle class="node-icon" cx="554" cy="284" r="11"/><path class="node-symbol" d="M551 281h6v6h-6zM554 278v3M554 287v3M548 284h3M557 284h3"/>
+                  <text class="node-type" x="573" y="287">PROCESS</text>
+                  <text class="node-title" x="548" y="321">Worker</text>
+                  <circle class="node-status" cx="699" cy="277" r="3"/>
+                </g>
+              </svg>
+            </div>
+            <p class="preview-scroll-hint">Swipe or scroll the example to see every component.</p>
+            <div class="preview-description-row">
+              <div class="preview-detail-icon" aria-hidden="true"><span id="preview-detail-initial">W</span></div>
+              <div class="preview-detail-copy" aria-live="polite">
+                <div class="preview-detail-heading"><strong id="preview-detail-title">Web client</strong><span id="preview-detail-kind">ENTRY POINT</span></div>
+                <p id="preview-description">An illustrative starting point for a request into this sample system.</p>
+              </div>
+            </div>
+            <div class="preview-card-foot"><span>Example components only</span><span>Focus or hover a card to explore</span></div>
+          </div>
+        </section>
+
+        <section class="how-section content-width" id="how-it-works" aria-labelledby="how-title">
+          <div class="section-heading">
+            <p class="eyebrow landing-eyebrow"><span class="eyebrow-dot"></span> FROM REPOSITORY TO MAP</p>
+            <h2 id="how-title">A clear view, grounded in your code.</h2>
+            <p>Atlas helps you turn a coding agent's repository findings into a map you can understand and maintain.</p>
+          </div>
+          <div class="steps-grid">
+            <article class="step-card">
+              <span class="step-number">01</span>
+              <h3>Ask the agent you already use</h3>
+              <p>Copy Atlas's prompt into the coding agent working in your repository. It checks project files and explains what it can support with evidence.</p>
+            </article>
+            <article class="step-card">
+              <span class="step-number">02</span>
+              <h3>Explore the system</h3>
+              <p>Open the generated map to follow components and their relationships. Select cards, search, edit, and move between map and dependency views.</p>
+            </article>
+            <article class="step-card">
+              <span class="step-number">03</span>
+              <h3>Keep a useful copy</h3>
+              <p>Save the map in this browser, export a portable JSON backup, or share an interactive link when you choose to.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="sample-band content-width" aria-labelledby="sample-title">
+          <div class="sample-band-copy">
+            <p class="eyebrow landing-eyebrow"><span class="eyebrow-dot"></span> START WITH A SAFE EXAMPLE</p>
+            <h2 id="sample-title">See the map before you bring your own.</h2>
+            <p>The sample uses fictional software components. It contains no repository or customer data.</p>
+          </div>
+          <a class="button button-secondary" href="./workspace.html?example=flow">Explore the sample map <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11m-5-5 5 5-5 5"/></svg></a>
+        </section>
+
+        <section class="privacy-section content-width" id="privacy" aria-labelledby="privacy-title">
+          <div class="privacy-intro">
+            <p class="eyebrow landing-eyebrow"><span class="eyebrow-dot"></span> PRIVATE BY DESIGN</p>
+            <h2 id="privacy-title">Your project map stays yours.</h2>
+            <p>Atlas is a static browser app. It has no account, analytics, or service that receives your map.</p>
+          </div>
+          <div class="privacy-grid">
+            <article class="privacy-card">
+              <span class="privacy-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4"/></svg>
+              </span>
+              <h3>Local to this browser</h3>
+              <p>Maps and edits are kept in browser storage. Atlas does not upload repository files or graph data. Clearing this browser’s storage removes local maps, so export a JSON backup first if you want to keep them.</p>
+            </article>
+            <article class="privacy-card">
+              <span class="privacy-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M5 4h9l5 5v11H5zM14 4v5h5M8 14h8M8 17h6"/></svg>
+              </span>
+              <h3>Back up when you need to</h3>
+              <p>Export JSON to move a map to another browser or keep an offline copy. You decide where that file goes.</p>
+            </article>
+            <article class="privacy-card">
+              <span class="privacy-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 6 .4l3-3a4 4 0 0 0-5.7-5.6l-1.7 1.7M14 11a4 4 0 0 0-6-.4l-3 3a4 4 0 0 0 5.7 5.6l1.7-1.7"/></svg>
+              </span>
+              <h3>Share intentionally</h3>
+              <p>A share link carries a snapshot in its URL fragment, after #; that fragment is not sent in the page request. Anyone with the full link can open that snapshot. A recipient edits their own copy, which does not change yours.</p>
+            </article>
+          </div>
+          <p class="privacy-note"><strong>Agent access is separate:</strong> the copied prompt goes to the coding agent you choose. That agent's own data handling applies; Atlas does not read your repository.</p>
+        </section>
+      </main>
+
+      <footer class="site-footer content-width">
+        <a class="brand footer-brand" href="./" aria-label="Atlas home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span>Atlas</span>
+        </a>
+        <p>Architecture maps for any software project.</p>
+        <a href="./workspace.html">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
+      </footer>
+    </div>
+
+    <dialog class="prompt-dialog" id="prompt-dialog" aria-labelledby="prompt-dialog-title">
+      <div class="prompt-dialog-card">
+        <div class="prompt-dialog-head">
+          <div>
+            <p class="eyebrow landing-eyebrow"><span class="eyebrow-dot"></span> REPOSITORY-READY INSTRUCTIONS</p>
+            <h2 id="prompt-dialog-title">Copy the Atlas agent prompt</h2>
+            <p>Paste it into the coding agent already working with your project.</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-prompt aria-label="Close prompt dialog">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5 15 15M15 5 5 15"/></svg>
+          </button>
+        </div>
+        <label class="prompt-label" for="agent-prompt">Universal architecture prompt</label>
+        <textarea id="agent-prompt" readonly spellcheck="false" aria-describedby="prompt-help"></textarea>
+        <p class="prompt-help" id="prompt-help">The prompt asks for repository evidence, calls out uncertainty, and tells the agent to keep secrets and private source contents out of the map.</p>
+        <p class="copy-status" id="copy-status" aria-live="polite"></p>
+        <p class="copy-fallback-note" id="copy-fallback-note" hidden>Clipboard access is unavailable. The prompt is selected above; copy it with your keyboard or device command.</p>
+        <div class="prompt-dialog-actions">
+          <button class="button button-secondary" type="button" data-close-prompt>Close</button>
+          <button class="button button-primary" type="button" id="copy-agent-prompt">Copy prompt</button>
+        </div>
+      </div>
+    </dialog>
+    <script type="module" src="./src/landing.js"></script>
+  </body>
+</html>
