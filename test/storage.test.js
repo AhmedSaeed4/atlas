@@ -68,7 +68,7 @@ test("keeps duplicate project IDs in recovery mode with original bytes intact", 
   restoreStorage();
 });
 
-test("distinguishes the bundled request-flow example from a same-title user map", () => {
+test("preserves saved maps and edited examples while recognizing request-flow identity", () => {
   const sample = SAMPLE_GRAPHS.find((graph) => graph.project.name === "Request flow demo");
   const payload = {
     version: 1,
@@ -85,6 +85,11 @@ test("distinguishes the bundled request-flow example from a same-title user map"
   assert.equal(state.projects.find((project) => project.id === "legacy-flow").exampleId, "request-flow");
   assert.equal(state.projects.find((project) => project.id === "user-flow").exampleId, undefined);
   assert.equal(state.projects.find((project) => project.id === "renamed-flow").exampleId, "request-flow");
+  assert.deepEqual(state.projects.map((project) => project.id), ["legacy-flow", "user-flow", "renamed-flow"]);
+  assert.equal(state.projects.find((project) => project.id === "renamed-flow").graph.project.name, "My renamed example");
+  assert.equal(state.projects.find((project) => project.id === "renamed-flow").graph.nodes.length, 0);
+  assert.equal(writeLibrary(state.projects, state.activeId).ok, true);
+  assert.deepEqual(readLibrary(normalizeGraph).projects.map((project) => project.id), ["legacy-flow", "user-flow", "renamed-flow"]);
   restoreStorage();
 });
 
@@ -110,6 +115,39 @@ test("clears only the Project Atlas storage key", () => {
   restoreStorage();
 });
 
+
+test("a blocked local clear reports failure and keeps the raw recovery bytes", () => {
+  const raw = "{broken library bytes";
+  useStorage({ getItem: () => raw, setItem: () => {}, removeItem: () => { throw new Error("blocked"); } });
+  const result = clearLibrary();
+  assert.equal(result.ok, false);
+  assert.match(result.error, /blocked local storage/i);
+  const state = readLibrary(normalizeGraph);
+  assert.equal(state.writable, false);
+  assert.equal(state.rawBackup, raw);
+  restoreStorage();
+});
+
+test("a missing library starts empty and remains empty after a clear and reload", () => {
+  const storage = fakeStorage({ "atlas-theme": "light", "atlas-inspector-width": "420", unrelated: "keep" });
+  useStorage(storage);
+
+  const fresh = readLibrary(normalizeGraph);
+  assert.deepEqual(fresh.projects, []);
+  assert.equal(fresh.activeId, "");
+  assert.equal(fresh.writable, true);
+
+  assert.equal(writeLibrary(fresh.projects, fresh.activeId).ok, true);
+  assert.deepEqual(readLibrary(normalizeGraph).projects, []);
+  assert.equal(clearLibrary().ok, true);
+  const reloaded = readLibrary(normalizeGraph);
+  assert.deepEqual(reloaded.projects, []);
+  assert.equal(reloaded.activeId, "");
+  assert.equal(storage.has("atlas-theme"), true);
+  assert.equal(storage.has("atlas-inspector-width"), true);
+  assert.equal(storage.has("unrelated"), true);
+  restoreStorage();
+});
 
 test("reloads optional details and explicit junction nodes from the existing local library", () => {
   const storage = fakeStorage();

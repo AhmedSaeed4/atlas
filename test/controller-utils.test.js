@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { consumeFlowExampleQuery, createRevisionGate, createShareLoadTracker, fitScaleForBounds, isFlowExampleRoute, readImportSource, removeProjectSnapshot, shouldSaveOnEnter } from "../public/src/controller-utils.js";
+import { addOrReuseExampleProject, clearLocalDataRoute, clearRejectedShareRoute, consumeFlowExampleQuery, createRevisionGate, createShareLoadTracker, fitScaleForBounds, isFlowExampleRoute, readImportSource, removeProjectSnapshot, shareFailureContext, shouldSaveOnEnter } from "../public/src/controller-utils.js";
 
 test("paste tab uses its text even when a previously selected file remains", async () => {
   const staleFile = { name: "old-map.json" };
@@ -67,6 +67,36 @@ test("flow example route yields to any fragment and consumes only its own query 
   assert.equal(consumeFlowExampleQuery("?campaign=local"), "?campaign=local");
 });
 
+test("optional example action adds one request-flow project and reuses an edited copy", () => {
+  const otherExample = { id: "old-sample", exampleId: "other-demo", graph: { name: "Older demo" } };
+  const savedFlow = { id: "flow", exampleId: "request-flow", graph: { name: "Owner edits" } };
+  const original = [otherExample, savedFlow];
+  let created = 0;
+  const reused = addOrReuseExampleProject(original, "request-flow", () => { created += 1; return {}; });
+  assert.equal(reused.project, savedFlow);
+  assert.equal(reused.projects, original);
+  assert.equal(reused.added, false);
+  assert.equal(created, 0);
+
+  const addedFlow = { id: "new-flow", exampleId: "request-flow" };
+  const added = addOrReuseExampleProject([otherExample], "request-flow", () => { created += 1; return addedFlow; });
+  assert.deepEqual(added.projects, [addedFlow, otherExample]);
+  assert.equal(added.project, addedFlow);
+  assert.equal(added.added, true);
+  assert.equal(created, 1);
+});
+
+test("clearing local data consumes example intent and the share fragment", () => {
+  assert.deepEqual(clearLocalDataRoute("?example=flow&campaign=local"), { search: "?campaign=local", hash: "" });
+  assert.deepEqual(clearLocalDataRoute("?campaign=local"), { search: "?campaign=local", hash: "" });
+});
+
+test("JSON recovery clears only the exact rejected share fragment and consumes example intent", () => {
+  assert.deepEqual(clearRejectedShareRoute("?example=flow&campaign=local", "#map=g.bad", "#map=g.bad"), { search: "?campaign=local", hash: "" });
+  assert.equal(clearRejectedShareRoute("?campaign=local", "#map=g.new", "#map=g.bad"), null);
+  assert.equal(clearRejectedShareRoute("?campaign=local", "#other", "#other"), null);
+});
+
 test("confirmed project deletion resolves only the captured project graph snapshot", () => {
   const firstGraph = {};
   const otherGraph = {};
@@ -124,6 +154,22 @@ test("share retry skips matching deletion and changed routes while preserving ne
   assert.equal(tracker.interruptPending()?.fragment, "#map=g.original");
 });
 
+test("confirmed clear invalidates a pending shared-map decode while cancel can still resume it", () => {
+  const tracker = createShareLoadTracker();
+  const request = tracker.begin("#map=g.pending");
+  const interruption = tracker.interruptPending();
+  assert.equal(tracker.isCurrent(request, "#map=g.pending"), false);
+  assert.equal(tracker.shouldResume(interruption, "#map=g.pending"), true);
+
+  const confirmedClear = createShareLoadTracker();
+  const staleRequest = confirmedClear.begin("#map=g.pending");
+  const staleInterruption = confirmedClear.interruptPending();
+  confirmedClear.cancel();
+  assert.equal(confirmedClear.isCurrent(staleRequest, "#map=g.pending"), false);
+  assert.equal(confirmedClear.shouldResume(staleInterruption, ""), false);
+  assert.equal(confirmedClear.interruptPending(), null);
+});
+
 test("Project details can transfer one interrupted share route to its Delete confirmation", () => {
   const tracker = createShareLoadTracker();
   tracker.begin("#map=g.project");
@@ -134,4 +180,9 @@ test("Project details can transfer one interrupted share route to its Delete con
   assert.equal(tracker.transfer(projectDialogIntent), null);
   assert.equal(tracker.shouldResume(confirmIntent, "#map=g.project"), true);
   assert.equal(tracker.shouldResume(projectDialogIntent, "#map=g.project"), false);
+});
+
+test("invalid-share status distinguishes a retained current map from an empty workspace", () => {
+  assert.equal(shareFailureContext(true), "The map currently shown was not replaced by the incoming link.");
+  assert.equal(shareFailureContext(false), "No current map was replaced by this link.");
 });

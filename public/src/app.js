@@ -10,29 +10,28 @@ import { chartCompactReadout, chartDescription, chartGeometry, chartPresentation
 import { renderTimeline } from "./timeline.js";
 import { clearEdgeEntranceState, graphMotionAllowed, setEdgeTraceState } from "./edge-motion.js";
 import { createShareUrl, decodeShareHash, findSharedProject, isLocalShareHost, shareKey, shouldClearShareFragmentForDeletedProject } from "./share.js";
-import { consumeFlowExampleQuery, createRevisionGate, createShareLoadTracker, fitScaleForBounds, isFlowExampleRoute, readImportSource, removeProjectSnapshot, shouldSaveOnEnter } from "./controller-utils.js";
+import { addOrReuseExampleProject, clearLocalDataRoute, clearRejectedShareRoute, consumeFlowExampleQuery, createRevisionGate, createShareLoadTracker, fitScaleForBounds, isFlowExampleRoute, shareFailureContext, readImportSource, removeProjectSnapshot, shouldSaveOnEnter } from "./controller-utils.js";
 import { INSPECTOR_DEFAULT_WIDTH, clampInspectorWidth, inspectorWidthLimits, isNamedLinkSnapshotCurrent, namedLinkPayload, readInspectorExpanded, readInspectorWidthPreference, writeInspectorExpanded, writeInspectorWidth, writeNamedLinkClipboard } from "./refinement-ui.js";
 import { branchEdgeCandidate, canStartPointerGesture, connectionPreviewPath, nodeContextIsCurrent, screenToWorld } from "./refinement-graph.js";
+import { isCurrentTouchEdgeSelection, isTouchClick, transitionTypeInteractions } from "./filter-interaction.js";
 
 const byId = (id) => document.getElementById(id);
 const svgNS = "http://www.w3.org/2000/svg";
 const FLOW_EXAMPLE_ID = "request-flow";
 const FLOW_EXAMPLE_NAME = "Request flow demo";
 const isFlowExample = (project) => project?.exampleId === FLOW_EXAMPLE_ID;
-const bundledProjects = () => SAMPLE_GRAPHS.map((graph, index) => ({
-  id: "sample-" + (index + 1),
-  graph: normalizeGraph(graph),
-  updatedAt: Date.now() - index * 1000,
-  ...(graph.project.name === FLOW_EXAMPLE_NAME ? { exampleId: FLOW_EXAMPLE_ID } : {}),
-}));
 const stored = readLibrary(normalizeGraph);
 let recoveryMode = !stored.writable;
 let recoveryText = stored.rawBackup || "";
-let projects = stored.projects || bundledProjects();
+let projects = stored.projects ?? [];
 let activeId = projects.some((project) => project.id === stored.activeId) ? stored.activeId : (projects[0]?.id || "");
 let selectedNodeId = null;
 let focusedType = "";
 let excludedTypes = new Set();
+let filterPointerActivation = null;
+let filterInputModality = "";
+let touchInteractionActive = false;
+let touchSelectedEdge = null;
 let searchTerm = "";
 let editingNodeId = null;
 let editingEdgeId = null;
@@ -51,6 +50,7 @@ let confirmAction = null;
 let dragState = null;
 let motionPaused = false;
 const shareLoadTracker = createShareLoadTracker();
+let incomingShareFailure = null;
 let confirmResumeShareLoad = null;
 let projectEditResumeShareLoad = null;
 let shareDialogSequence = 0;
@@ -297,18 +297,50 @@ function renderFilters() {
   if (!types.length) { syncFilterSpotlight(); return; }
   const all = plain("button", "filter-chip" + (excludedTypes.size === 0 ? " active" : ""), "All");
   all.type = "button";
-  all.addEventListener("click", () => { excludedTypes.clear(); renderFilters(); renderGraph(); });
+  all.setAttribute("aria-pressed", String(excludedTypes.size === 0));
+  all.addEventListener("click", (event) => {
+    const pointerDownType = filterPointerActivation?.type === "all" ? filterPointerActivation.pointerType : "";
+    filterPointerActivation = null;
+    const touchActivation = isTouchClick(event, pointerDownType);
+    filterInputModality = touchActivation ? "touch" : (event.pointerType || filterInputModality);
+    applyTypeInteraction({
+      kind: "activate-all",
+      pointerType: event.pointerType || "",
+      pointerDownType,
+      detail: event.detail,
+    });
+    byId("type-filter-status").textContent = "All component types are visible and no type highlight is active.";
+    renderFilters();
+    renderGraph();
+  });
   container.append(all);
   for (const type of types) {
     const chip = plain("button", "filter-chip" + (excludedTypes.has(type) ? "" : " active"));
     chip.type = "button";
     chip.dataset.type = type;
+    chip.setAttribute("aria-pressed", String(!excludedTypes.has(type)));
     const dot = plain("span", "type-dot");
     dot.style.background = graphTypeAccent(type);
     chip.append(dot, plain("span", "", type), plain("span", "chip-count", String(currentGraph().nodes.filter((node) => node.type === type).length)));
-    chip.addEventListener("click", () => {
-      if (excludedTypes.has(type)) excludedTypes.delete(type);
-      else excludedTypes.add(type);
+    chip.addEventListener("click", (event) => {
+      const pointerDownType = filterPointerActivation?.type === type ? filterPointerActivation.pointerType : "";
+      filterPointerActivation = null;
+      const action = {
+        kind: "activate-type",
+        type,
+        pointerType: event.pointerType || "",
+        pointerDownType,
+        detail: event.detail,
+      };
+      const touchActivation = isTouchClick(action, pointerDownType);
+      filterInputModality = touchActivation ? "touch" : (event.pointerType || filterInputModality);
+      applyTypeInteraction(action);
+      if (touchActivation) {
+        byId("type-filter-status").textContent = focusedType
+          ? "Highlighting " + focusedType + " components. Tap the same type again or choose All to clear."
+          : "Component type highlight cleared.";
+        return;
+      }
       renderFilters();
       renderGraph();
     });
@@ -320,15 +352,22 @@ function syncFilterSpotlight() {
   const container = byId("type-filters");
   container.classList.toggle("has-spotlight", Boolean(focusedType));
   for (const chip of container.querySelectorAll(".filter-chip[data-type]")) {
-    chip.classList.toggle("spotlight-active", chip.dataset.type === focusedType);
+    const current = chip.dataset.type === focusedType;
+    chip.classList.toggle("spotlight-active", current);
+    chip.setAttribute("aria-current", current ? "true" : "false");
   }
 }
-function setFocusedType(type) {
-  const next = type && currentGraph().nodes.some((node) => node.type === type) ? type : "";
-  if (next === focusedType) return;
-  focusedType = next;
-  syncFilterSpotlight();
-  refreshTraceStyles();
+function applyTypeInteraction(action) {
+  const previousFocus = focusedType;
+  const next = transitionTypeInteractions({ focusedType, excludedTypes, touchInteractionActive }, action);
+  focusedType = next.focusedType;
+  excludedTypes = next.excludedTypes;
+  touchInteractionActive = next.touchInteractionActive;
+  if (focusedType !== previousFocus) {
+    syncFilterSpotlight();
+    refreshTraceStyles();
+  }
+  return next;
 }
 function refreshTraceStyles() {
   const graph = currentGraph();
@@ -446,7 +485,14 @@ function renderGraph() {
   if (previousDefinitions) previousDefinitions.remove();
   const definitions = svgElement("defs");
   viewport.insertBefore(definitions, edgeLayer);
-  byId("empty-state").hidden = graph.nodes.length > 0;
+  const hasProject = Boolean(activeProject());
+  const isEmpty = graph.nodes.length === 0;
+  byId("empty-state").hidden = !isEmpty;
+  byId("empty-state-title").textContent = hasProject ? "Your map starts here" : "Start with an empty workspace";
+  byId("empty-state-copy").textContent = hasProject
+    ? "Add a component to build this architecture, or import an agent-generated map."
+    : "Add a project, import an agent-generated map, or copy the agent prompt from the page header.";
+  byId("empty-state-create").textContent = hasProject ? "Add component" : "Add project";
   byId("node-count").textContent = graph.nodes.length + (graph.nodes.length === 1 ? " component" : " components");
   byId("graph-count-label").textContent = graph.nodes.length + " nodes / " + graph.edges.length + " edges";
   const trace = traceRoutes(graph, selectedNodeId);
@@ -572,6 +618,7 @@ function renderGraph() {
       group.append(agentBeam);
     }    group.addEventListener("click", () => {
       selectedEdgeId = null;
+      touchSelectedEdge = null;
       hideGraphContextMenu();
       selectedNodeId = selectedNodeId === node.id ? null : node.id;
       renderInspector();
@@ -589,6 +636,7 @@ function renderGraph() {
     group.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
+        touchSelectedEdge = null;
         selectedNodeId = selectedNodeId === node.id ? null : node.id;
         renderInspector();
         refreshTraceStyles();
@@ -645,17 +693,28 @@ function renderGraph() {
     group.addEventListener("animationend", (event) => {
       if (event.animationName === "atlas-label-in") clearEdgeEntranceState({ group });
     });
-    group.addEventListener("pointerdown", (event) => event.stopPropagation());
-    group.addEventListener("click", () => {
+    let edgePointerActivation = null;
+    group.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+      edgePointerActivation = { pointerId: event.pointerId, pointerType: event.pointerType };
+    });
+    group.addEventListener("pointercancel", (event) => {
+      if (edgePointerActivation?.pointerId === event.pointerId) edgePointerActivation = null;
+    });
+    group.addEventListener("click", (event) => {
+      const pointerDownType = edgePointerActivation?.pointerType || "";
+      edgePointerActivation = null;
+      const touchActivation = isTouchClick(event, pointerDownType);
       selectedNodeId = null;
       selectedEdgeId = selectedEdgeId === edge.id ? null : edge.id;
+      touchSelectedEdge = selectedEdgeId === edge.id && touchActivation ? { id: edge.id, projectId: activeId, graphRef: activeProject()?.graph } : null;
       renderInspector();
       refreshEdgeSelection();
     });
     group.addEventListener("dblclick", (event) => { event.stopPropagation(); openEdgeEditor(edge.id); });
     group.addEventListener("contextmenu", (event) => { event.preventDefault(); event.stopPropagation(); showEdgeContextMenu(edge.id, event.clientX, event.clientY); });
     group.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectedNodeId = null; selectedEdgeId = selectedEdgeId === edge.id ? null : edge.id; renderInspector(); refreshEdgeSelection(); }
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectedNodeId = null; selectedEdgeId = selectedEdgeId === edge.id ? null : edge.id; touchSelectedEdge = null; renderInspector(); refreshEdgeSelection(); }
       else if (event.key === "F2") openEdgeEditor(edge.id);
       else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); showEdgeContextMenu(edge.id, event.clientX || null, event.clientY || null); }
     });
@@ -728,12 +787,72 @@ function renderGraph() {
   if (resumeSvgTimeline) { try { svgTimeline.unpauseAnimations(); } catch {} }
   if (viewMode === "timeline") renderTimelineView();
 }
+function inspectorEdgeContext(edge) {
+  const project = activeProject();
+  if (!project) return null;
+  const positions = layoutGraph(project.graph).positions;
+  const source = positions.get(edge.source) || { x: 0, y: 0 };
+  const target = positions.get(edge.target) || source;
+  return {
+    projectId: project.id,
+    graphRef: project.graph,
+    edgeId: edge.id,
+    edgeSnapshot: { ...edge },
+    position: { x: (source.x + target.x) / 2, y: (source.y + target.y) / 2 },
+  };
+}
+function renderTouchEdgeInspector(edge, container) {
+  const graph = currentGraph();
+  const source = graph.nodes.find((node) => node.id === edge.source);
+  const target = graph.nodes.find((node) => node.id === edge.target);
+  const type = plain("span", "detail-type");
+  const dot = plain("span", "type-dot");
+  dot.style.background = typeColor(edge.type || "Connection");
+  type.append(dot, document.createTextNode(edge.type || "Connection"));
+  const body = plain("div", "inspector-body");
+  body.append(type, plain("h3", "detail-title", edge.label || edge.type || "Unlabeled connection"));
+  body.append(plain("p", "detail-description", "From " + (source?.label || edge.source) + " to " + (target?.label || edge.target)));
+  if (edge.type && edge.label) body.append(plain("p", "detail-description", "Kind: " + edge.type));
+
+  const actions = plain("div", "inspector-actions edge-inspector-actions");
+  actions.setAttribute("role", "group");
+  actions.setAttribute("aria-label", "Connection actions");
+  const context = inspectorEdgeContext(edge);
+  const makeAction = (label, ariaLabel, title, activate, className = "") => {
+    const button = plain("button", className, label);
+    button.type = "button";
+    button.setAttribute("aria-label", ariaLabel);
+    button.title = title;
+    button.addEventListener("click", (event) => activate(event.currentTarget));
+    actions.append(button);
+  };
+  makeAction("Edit", "Edit connection", "Edit connection", (returnFocus) => openEdgeEditor(edge.id, null, { returnFocus }));
+  makeAction("Source", "Reconnect source component", "Reconnect source", (returnFocus) => openEdgeEditor(edge.id, null, { focusField: "edge-source", returnFocus }));
+  makeAction("Target", "Reconnect target component", "Reconnect target", (returnFocus) => openEdgeEditor(edge.id, null, { focusField: "edge-target", returnFocus }));
+  makeAction("Branch", "Branch from connection", "Branch from connection", (returnFocus) => openBranchEditor(context, { returnFocus }));
+  const remove = plain("button", "delete-action");
+  remove.append(uiIcon("trash"));
+  remove.type = "button";
+  remove.setAttribute("aria-label", "Delete connection");
+  remove.title = "Delete connection";
+  remove.addEventListener("click", (event) => confirmDeleteEdgeSnapshot(context, event.currentTarget));
+  actions.append(remove);
+  body.append(actions);
+  container.append(body);
+}
 function renderInspector() {
   const container = byId("inspector-content");
   container.replaceChildren();
   const graph = currentGraph();
   const node = graph.nodes.find((item) => item.id === selectedNodeId);
   byId("add-edge").disabled = graph.nodes.length < 1;
+  if (!node && isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)) {
+    const edge = graph.edges.find((item) => item.id === selectedEdgeId);
+    if (edge) {
+      renderTouchEdgeInspector(edge, container);
+      return;
+    }
+  }
   if (!node) {
     const empty = plain("div", "inspector-empty");
     const emptyIcon = plain("span", "inspector-empty-icon");
@@ -871,9 +990,17 @@ function setViewMode(mode) {
   updateViewMode();
   renderGraph();
 }
+function updateWorkspaceActionAvailability() {
+  const hasProject = Boolean(activeProject());
+  for (const id of ["share-graph", "edit-project", "export-menu-button", "auto-layout", "add-node", "search", "zoom-in", "zoom-out", "fit-graph", "pause-motion", "show-timeline"]) {
+    byId(id).disabled = !hasProject;
+  }
+  if (!hasProject) byId("export-menu").hidden = true;
+}
 function renderAll() {
   renderLibrary();
   updateProjectHeader();
+  updateWorkspaceActionAvailability();
   renderFilters();
   updateViewMode();
   renderGraph();
@@ -1181,12 +1308,12 @@ function openFlowExample() {
   cancelPendingShareLoad();
   const example = SAMPLE_GRAPHS.find((graph) => graph.project.name === FLOW_EXAMPLE_NAME);
   if (!example) { showToast("The request-flow example is unavailable.", "error"); return; }
-  let project = projects.find((item) => isFlowExample(item));
-  const added = !project;
-  if (!project) {
-    project = makeProject(normalizeGraph(example), createProjectId(), { exampleId: FLOW_EXAMPLE_ID });
-    projects.unshift(project);
-  }
+  const result = addOrReuseExampleProject(projects, FLOW_EXAMPLE_ID, () =>
+    makeProject(normalizeGraph(example), createProjectId(), { exampleId: FLOW_EXAMPLE_ID }),
+  );
+  projects = result.projects;
+  const project = result.project;
+  const added = result.added;
   activeId = project.id;
   viewMode = "timeline";
   selectedNodeId = null;
@@ -1197,8 +1324,8 @@ function openFlowExample() {
   animateStructure = true;
   renderAll();
   fitGraph(false);
-  persist();
-  if (added) showToast("Added the request-flow example as a separate project. Your existing maps are unchanged.");
+  const saved = persist();
+  if (added && saved) showToast("Added the request-flow example as a separate saved project. Your existing maps are unchanged.");
 }
 function confirmProjectDelete() {
   const project = activeProject();
@@ -1839,6 +1966,7 @@ async function submitImport() {
     if (source === null || !importReadGate.isCurrent(request) || !dialog.open || currentImportTab() !== tab) return;
     if (!source.trim()) throw new Error("Paste a JSON map or choose a JSON file first.");
     const graph = normalizeEditableGraph(source);
+    recoverIncomingShareFailureAfterImport();
     cancelPendingShareLoad();
     const project = makeProject(graph);
     projects.unshift(project);
@@ -1853,8 +1981,9 @@ async function submitImport() {
     animateStructure = true;
     renderAll();
     fitGraph(true);
-    persist();
-    showToast("Imported " + graph.nodes.length + " components. This map is stored in this browser.");
+    const saved = persist(false);
+    if (saved) showToast("Imported " + graph.nodes.length + " components. This map is stored in this browser.");
+    else showToast("Imported for this session, but Atlas could not save the map in this browser. Download JSON before leaving.", "error");
   } catch (error) {
     if (!importReadGate.isCurrent(request) || !dialog.open || currentImportTab() !== tab) return;
     importError(error instanceof Error ? error.message : "The map could not be imported.");
@@ -1875,21 +2004,40 @@ async function importDroppedFile(file) {
 }
 function requestClearData() {
   const message = recoveryMode && recoveryText
-    ? "This permanently removes the saved Project Atlas library from this browser. Download the saved-data backup first if you need to preserve it."
-    : "This removes the saved Project Atlas library from this browser. Bundled examples will be available again.";
-  openConfirm("Clear local data?", message, "Clear local data", () => {
+    ? "This permanently removes the saved Project Atlas library from this browser. Download the saved-data backup first if you need to preserve it. Theme and inspector preferences remain; the workspace will be empty."
+    : "This removes the saved Project Atlas library from this browser. Theme and inspector preferences remain; the workspace will be empty. You can add or import a map, or opt in to View example flow later.";
+  openConfirm("Clear local data and start fresh?", message, "Clear and start fresh", () => {
+    const route = clearLocalDataRoute(location.search);
+    try {
+      history.replaceState(history.state, "", location.pathname + route.search + route.hash);
+    } catch {
+      showToast("The current share or example route could not be cleared, so local data was left unchanged.", "error");
+      return;
+    }
+    shareLoadTracker.cancel();
+    clearIncomingShareFailure();
+    confirmResumeShareLoad = null;
     const result = clearLibrary();
     if (!result.ok) { showToast(result.error, "error"); return; }
     recoveryMode = false;
     recoveryText = "";
     lastStorageError = "";
-    projects = bundledProjects();
-    activeId = projects[0]?.id || "";
-    viewMode = isFlowExample(activeProject()) ? "timeline" : "graph";
+    projects = [];
+    activeId = "";
+    viewMode = "graph";
     selectedNodeId = null;
+    selectedEdgeId = null;
+    touchSelectedEdge = null;
+    focusedType = "";
+    excludedTypes.clear();
+    filterPointerActivation = null;
+    filterInputModality = "";
+    touchInteractionActive = false;
+    searchTerm = "";
+    byId("search").value = "";
     renderAll();
-    fitGraph(true);
-    showToast("Project Atlas local data was cleared. Example maps are ready.");
+    fitGraph(false);
+    showToast("Local map data cleared. Your workspace is empty; add or import a map when ready.");
   });
 }
 function downloadRecovery() {
@@ -2094,10 +2242,47 @@ async function copyNamedShareLink() {
     }
   }
 }
+function showIncomingShareFailure(fragment, message) {
+  incomingShareFailure = { fragment, message };
+  byId("incoming-share-message").textContent = message;
+  byId("incoming-share-context").textContent = shareFailureContext(Boolean(activeProject()));
+  byId("incoming-share-error").hidden = false;
+}
+function clearIncomingShareFailure() {
+  incomingShareFailure = null;
+  byId("incoming-share-error").hidden = true;
+  byId("incoming-share-message").textContent = "";
+  byId("incoming-share-context").textContent = "";
+}
+function recoverIncomingShareFailureAfterImport() {
+  const failure = incomingShareFailure;
+  if (!failure) return;
+  const route = clearRejectedShareRoute(location.search, location.hash, failure.fragment);
+  if (!route) {
+    clearIncomingShareFailure();
+    return;
+  }
+  try {
+    history.replaceState(history.state, "", location.pathname + route.search + route.hash);
+    clearIncomingShareFailure();
+  } catch {
+    showIncomingShareFailure(
+      failure.fragment,
+      failure.message + " The JSON map was imported, but this invalid share link could not be removed from the address bar.",
+    );
+  }
+}
+function dismissIncomingShareFailure() {
+  byId("incoming-share-error").hidden = true;
+}
 async function openIncomingShare() {
   const request = shareLoadTracker.begin(location.hash);
   const fragment = request.fragment;
-  if (!fragment.startsWith("#map=")) return;
+  if (!fragment.startsWith("#map=")) {
+    if (incomingShareFailure?.fragment !== fragment) clearIncomingShareFailure();
+    return;
+  }
+  if (incomingShareFailure && incomingShareFailure.fragment !== fragment) clearIncomingShareFailure();
   try {
     const graph = await decodeShareHash(fragment);
     if (!shareLoadTracker.isCurrent(request, location.hash)) return;
@@ -2115,6 +2300,7 @@ async function openIncomingShare() {
         projects.unshift(project);
       }
     }
+    clearIncomingShareFailure();
     activeId = project.id;
     viewMode = isFlowExample(activeProject()) ? "timeline" : "graph";
     selectedNodeId = null;
@@ -2128,7 +2314,7 @@ async function openIncomingShare() {
     showToast(recoveryMode ? "Opened shared map in this session. Download or clear the unreadable saved library before saving." : "Opened the shared map. It is available in this browser's project library.");
   } catch (error) {
     if (!shareLoadTracker.isCurrent(request, location.hash)) return;
-    showToast(error instanceof Error ? error.message : "This share link could not be opened.", "error");
+    showIncomingShareFailure(fragment, error instanceof Error ? error.message : "This share link could not be opened.");
   } finally {
     shareLoadTracker.finish(request);
   }
@@ -2165,6 +2351,8 @@ function attachEvents() {
   byId("show-map").addEventListener("click", () => setViewMode("graph"));
   byId("show-timeline").addEventListener("click", () => setViewMode("timeline"));
   byId("open-import").addEventListener("click", openImport);
+  byId("recover-share-json").addEventListener("click", openImport);
+  byId("dismiss-share-error").addEventListener("click", dismissIncomingShareFailure);
   byId("edit-project").addEventListener("click", openProjectEditor);
   byId("save-project").addEventListener("click", saveProjectDetails);
   byId("delete-project").addEventListener("click", confirmProjectDelete);
@@ -2201,24 +2389,49 @@ function attachEvents() {
     renderGraph();
   });
   const filterGroup = byId("type-filters");
+  document.addEventListener("keydown", () => { filterInputModality = "keyboard"; }, true);
+  filterGroup.addEventListener("pointerdown", (event) => {
+    filterInputModality = event.pointerType || filterInputModality;
+    const chip = event.target.closest?.(".filter-chip");
+    filterPointerActivation = chip
+      ? { type: chip.dataset.type || "all", pointerType: event.pointerType, pointerId: event.pointerId }
+      : null;
+  });
+  filterGroup.addEventListener("pointercancel", (event) => {
+    if (filterPointerActivation?.pointerId === event.pointerId) filterPointerActivation = null;
+  });
   filterGroup.addEventListener("pointerover", (event) => {
     const chip = event.target.closest?.(".filter-chip[data-type]");
-    if (chip) setFocusedType(chip.dataset.type);
+    if (chip) {
+      filterInputModality = event.pointerType || filterInputModality;
+      applyTypeInteraction({ kind: "pointer-over", type: chip.dataset.type, pointerType: event.pointerType });
+    }
   });
   filterGroup.addEventListener("pointerout", (event) => {
     const from = event.target.closest?.(".filter-chip[data-type]");
     if (!from) return;
+    filterInputModality = event.pointerType || filterInputModality;
     const to = event.relatedTarget?.closest?.(".filter-chip[data-type]");
-    if (to && filterGroup.contains(to)) setFocusedType(to.dataset.type);
-    else if (!filterGroup.contains(event.relatedTarget) || from.dataset.type === focusedType) setFocusedType("");
+    if (to && filterGroup.contains(to)) {
+      applyTypeInteraction({ kind: "pointer-over", type: to.dataset.type, pointerType: event.pointerType });
+    } else if (!filterGroup.contains(event.relatedTarget) || from.dataset.type === focusedType) {
+      applyTypeInteraction({ kind: "pointer-out", pointerType: event.pointerType });
+    }
   });
   filterGroup.addEventListener("focusin", (event) => {
     const chip = event.target.closest?.(".filter-chip[data-type]");
-    if (chip?.matches(":focus-visible")) setFocusedType(chip.dataset.type);
+    if (filterInputModality === "keyboard" && filterPointerActivation?.pointerType !== "touch" && chip?.matches(":focus-visible")) {
+      applyTypeInteraction({ kind: "focus", type: chip.dataset.type, inputType: "keyboard" });
+    }
   });
   filterGroup.addEventListener("focusout", () => queueMicrotask(() => {
     const chip = document.activeElement?.closest?.(".filter-chip[data-type]");
-    if (chip?.matches(":focus-visible")) setFocusedType(chip.dataset.type);
+    const keyboardFocus = filterInputModality === "keyboard" && chip?.matches(":focus-visible");
+    applyTypeInteraction({
+      kind: "focus",
+      type: keyboardFocus ? chip.dataset.type : "",
+      inputType: filterInputModality === "keyboard" ? "keyboard" : "unknown",
+    });
   }));
   byId("project-modal").addEventListener("close", () => {
     projectEditContext = null;
@@ -2248,6 +2461,10 @@ function attachEvents() {
     selectedFile = event.target.files?.[0] || null;
     byId("selected-file").textContent = selectedFile ? selectedFile.name + " (" + Math.ceil(selectedFile.size / 1024) + " KB)" : "No file selected";
     if (selectedFile) switchImportTab("file");
+  });
+  document.querySelector("[data-empty-create]").addEventListener("click", () => {
+    if (activeProject()) openNodeEditor();
+    else createProject();
   });
   document.querySelector("[data-empty-import]").addEventListener("click", openImport);
   byId("clear-data").addEventListener("click", requestClearData);

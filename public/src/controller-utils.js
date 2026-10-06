@@ -65,6 +65,24 @@ export function consumeFlowExampleQuery(search) {
   const remainder = params.toString();
   return remainder ? "?" + remainder : "";
 }
+
+export function addOrReuseExampleProject(projects, exampleId, createProject) {
+  const existing = projects.find((project) => project.exampleId === exampleId);
+  if (existing) return { projects, project: existing, added: false };
+  const project = createProject();
+  return { projects: [project, ...projects], project, added: true };
+}
+
+export function clearLocalDataRoute(search) {
+  return { search: consumeFlowExampleQuery(search), hash: "" };
+}
+
+export function clearRejectedShareRoute(search, hash, rejectedHash) {
+  const currentHash = String(hash || "");
+  if (!currentHash.startsWith("#map=") || currentHash !== String(rejectedHash || "")) return null;
+  return clearLocalDataRoute(search);
+}
+
 export function createShareLoadTracker() {
   let revision = 0;
   let pending = null;
@@ -105,4 +123,10 @@ export function createShareLoadTracker() {
         && isMapFragment(interruption.fragment);
     },
   };
+}
+
+export function shareFailureContext(hasCurrentProject) {
+  return hasCurrentProject
+    ? "The map currently shown was not replaced by the incoming link."
+    : "No current map was replaced by this link.";
 }

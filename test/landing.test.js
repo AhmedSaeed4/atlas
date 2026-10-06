@@ -47,8 +47,9 @@ test("the prompt viewer URL points at workspace.html and excludes the landing qu
 test("prompt generation uses the viewer URL and warns for local development", () => {
   const publicPrompt = buildAgentPrompt(getWorkspaceBaseUrl("https://atlas.example/"), false);
   assert.match(publicPrompt, /https:\/\/atlas\.example\/workspace\.html/);
-  assert.match(publicPrompt, /Manual: inspect the repository and create only architecture-map\.json/);
-  assert.match(publicPrompt, /Automatic: inspect the repository and create architecture-map\.json/);
+  assert.match(publicPrompt, /dedicated Atlas output folder/);
+  assert.match(publicPrompt, /Manual: inspect the repository read-only and create exactly one new timestamped JSON/);
+  assert.match(publicPrompt, /Automatic: create a new timestamped JSON and versioned helper/);
   assert.doesNotMatch(publicPrompt, /LOCAL DEVELOPMENT WARNING/);
 
   const localPrompt = buildAgentPrompt(getWorkspaceBaseUrl("http://127.0.0.1:4173/?example=flow"), true);
