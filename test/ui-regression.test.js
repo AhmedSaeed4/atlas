@@ -24,3 +24,12 @@ test("workspace documents local backups, separate shared snapshots, and the land
   assert.match(html, /separate copy, with no account, live collaboration, or upload/);
   assert.match(html, /A localhost link works only on this computer/);
 });
+test("invalid shared maps have persistent, accessible JSON import recovery", () => {
+  assert.match(html, /id="incoming-share-error"[^>]*role="alert"[^>]*aria-live="assertive"/);
+  assert.match(html, /id="incoming-share-title">Could not open this shared map/);
+  assert.match(html, /id="incoming-share-message"/);
+  assert.match(html, /id="incoming-share-context" class="incoming-share-context"/);
+  assert.match(html, /id="recover-share-json"[^>]*>Import JSON instead/);
+  assert.match(html, /id="dismiss-share-error"[^>]*>Dismiss/);
+  assert.match(css, /\.incoming-share-error\[hidden\]\{display:none\}/);
+});

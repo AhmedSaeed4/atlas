@@ -13,7 +13,7 @@ export function readLibrary(normalizeGraph) {
   let rawBackup = "";
   try {
     rawBackup = localStorage.getItem(STORAGE_KEY) || "";
-    if (rawBackup === "") return { projects: null, activeId: null, writable: true, error: "", rawBackup: "" };
+    if (rawBackup === "") return { projects: [], activeId: "", writable: true, error: "", rawBackup: "" };
     const parsed = JSON.parse(rawBackup);
     if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.projects)) {
       throw new Error("Saved project data is not in a format this version can read.");
