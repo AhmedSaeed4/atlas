@@ -638,3 +638,31 @@ select { color: var(--atlas-foreground); }
 .cta-icon { width: 14px; height: 14px; }
 .example-mark.ui-icon { display: block; width: 16px; height: 16px; }
 #add-edge { display: inline-flex; align-items: center; gap: 5px; }
+/* Progress stays inside the existing button, preserving its original dimensions. */
+.is-action-pending{position:relative;cursor:progress!important;opacity:1!important}
+.action-original{display:inline-flex;align-items:center;gap:inherit;visibility:hidden}
+.action-progress{position:absolute;inset:0 6px;display:flex;align-items:center;justify-content:center;gap:6px;pointer-events:none;animation:action-appear .12s ease-out}
+.action-progress>span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.action-spinner{display:inline-block;flex:0 0 12px;width:12px;height:12px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;animation:action-spin .8s linear infinite}
+#save-status[aria-busy="true"]::before{content:"";display:inline-block;width:10px;height:10px;margin-right:6px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-2px;animation:action-spin .8s linear infinite}
+.toast-region[popover]{inset:auto auto 43px 50%;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 32px);height:auto;margin:0;padding:0;border:0;background:transparent;overflow:visible;pointer-events:none}
+.toast-region[popover]:not(:popover-open){display:none}
+.toast-region::backdrop{background:transparent;pointer-events:none}
+.map-settings-actions{min-height:34px;align-items:flex-start;align-content:start}
+@media(min-width:561px) and (max-width:700px){.map-settings-actions{min-height:76px}}
+@keyframes action-spin{to{transform:rotate(360deg)}}
+@keyframes action-appear{from{opacity:0}to{opacity:1}}
+html[data-action-page-hidden="true"] .action-spinner,html[data-action-page-hidden="true"] #save-status[aria-busy="true"]::before{animation-play-state:paused}
+@media(max-width:560px){.map-settings-actions{min-height:252px}.toast-region[popover]{bottom:18px}}
+@media(prefers-reduced-motion:reduce){.action-spinner,.action-progress,#save-status[aria-busy="true"]::before{animation:none}.toast{animation:none}}
+
+.action-progress.is-compact>span:last-child{display:none}
+#account-status[aria-busy="true"]::before,#cloud-workspace-state[aria-busy="true"]::before{content:"";display:inline-block;width:10px;height:10px;margin-right:6px;border:1.5px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-2px;animation:action-spin .8s linear infinite}
+html[data-action-page-hidden="true"] #account-status[aria-busy="true"]::before,html[data-action-page-hidden="true"] #cloud-workspace-state[aria-busy="true"]::before{animation-play-state:paused}
+@media(prefers-reduced-motion:reduce){#account-status[aria-busy="true"]::before,#cloud-workspace-state[aria-busy="true"]::before{animation:none}}
+
+/* Edit history shares the existing toolbar palette and keeps fixed button sizes. */
+.edit-history-controls { display: inline-flex; flex: 0 0 auto; gap: 2px; align-items: center; }
+.edit-history-controls .history-button { width: 31px; height: 31px; padding: 6px; justify-content: center; }
+.history-button:disabled { opacity: .4; cursor: default; }
+@media (max-width: 820px) { .toolbar .edit-history-controls { order: 1; } }

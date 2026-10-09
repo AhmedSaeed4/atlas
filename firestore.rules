@@ -1,0 +1,368 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function workspacePath(workspaceId) {
+      return /databases/$(database)/documents/workspaces/$(workspaceId);
+    }
+
+    function chunkPath(workspaceId, revision, index) {
+      return /databases/$(database)/documents/workspaces/$(workspaceId)/revisions/$(revision)/chunks/$(index);
+    }
+
+    function isOwner(data) {
+      return data != null && request.auth != null && data.ownerId == request.auth.uid;
+    }
+
+    function validRandomId(value) {
+      return value is string && value.matches('^[A-Za-z0-9_-]{22}$');
+    }
+
+    function validChunkNumber(pathIndex, dataIndex) {
+      return (pathIndex == '0' && dataIndex == 0)
+        || (pathIndex == '1' && dataIndex == 1)
+        || (pathIndex == '2' && dataIndex == 2)
+        || (pathIndex == '3' && dataIndex == 3)
+        || (pathIndex == '4' && dataIndex == 4)
+        || (pathIndex == '5' && dataIndex == 5)
+        || (pathIndex == '6' && dataIndex == 6)
+        || (pathIndex == '7' && dataIndex == 7);
+    }
+
+    function chunkByteLengthAfter(workspaceId, revision, index) {
+      return getAfter(chunkPath(workspaceId, revision, index)).data.payload.size();
+    }
+
+    function revisionByteLengthAfter(workspaceId, revision, count) {
+      return chunkByteLengthAfter(workspaceId, revision, '0')
+        + (count < 2 ? 0 : chunkByteLengthAfter(workspaceId, revision, '1'))
+        + (count < 3 ? 0 : chunkByteLengthAfter(workspaceId, revision, '2'))
+        + (count < 4 ? 0 : chunkByteLengthAfter(workspaceId, revision, '3'))
+        + (count < 5 ? 0 : chunkByteLengthAfter(workspaceId, revision, '4'))
+        + (count < 6 ? 0 : chunkByteLengthAfter(workspaceId, revision, '5'))
+        + (count < 7 ? 0 : chunkByteLengthAfter(workspaceId, revision, '6'))
+        + (count < 8 ? 0 : chunkByteLengthAfter(workspaceId, revision, '7'));
+    }
+
+    function chunksMatchByteLength(workspaceId, revision, count, byteLength) {
+      return revisionByteLengthAfter(workspaceId, revision, count) == byteLength
+        && byteLength <= 2097152;
+    }
+
+    function chunksAbsentAfter(workspaceId, revision, count) {
+      return !existsAfter(chunkPath(workspaceId, revision, '0'))
+        && (count < 2 || !existsAfter(chunkPath(workspaceId, revision, '1')))
+        && (count < 3 || !existsAfter(chunkPath(workspaceId, revision, '2')))
+        && (count < 4 || !existsAfter(chunkPath(workspaceId, revision, '3')))
+        && (count < 5 || !existsAfter(chunkPath(workspaceId, revision, '4')))
+        && (count < 6 || !existsAfter(chunkPath(workspaceId, revision, '5')))
+        && (count < 7 || !existsAfter(chunkPath(workspaceId, revision, '6')))
+        && (count < 8 || !existsAfter(chunkPath(workspaceId, revision, '7')));
+    }
+
+    function validWorkspaceData(data) {
+      return data.keys().hasAll([
+          'schemaVersion',
+          'ownerId',
+          'shared',
+          'deleting',
+          'name',
+          'projectType',
+          'currentRevision',
+          'previousRevision',
+          'chunkCount',
+          'byteLength',
+          'nodeCount',
+          'edgeCount',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'schemaVersion',
+          'ownerId',
+          'shared',
+          'deleting',
+          'name',
+          'projectType',
+          'currentRevision',
+          'previousRevision',
+          'chunkCount',
+          'byteLength',
+          'nodeCount',
+          'edgeCount',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.schemaVersion == 1
+        && data.ownerId is string
+        && data.ownerId.size() > 0
+        && data.shared is bool
+        && data.deleting is bool
+        && data.name is string
+        && data.name.size() > 0
+        && data.name.size() <= 120
+        && data.projectType is string
+        && data.projectType.size() > 0
+        && data.projectType.size() <= 60
+        && validRandomId(data.currentRevision)
+        && (data.previousRevision == null || validRandomId(data.previousRevision))
+        && data.chunkCount is int
+        && data.chunkCount >= 1
+        && data.chunkCount <= 8
+        && data.byteLength is int
+        && data.byteLength >= 1
+        && data.byteLength <= 2097152
+        && data.nodeCount is int
+        && data.nodeCount >= 0
+        && data.nodeCount <= 800
+        && data.edgeCount is int
+        && data.edgeCount >= 0
+        && data.edgeCount <= 2400
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function validInitialWorkspace(workspaceId) {
+      let data = request.resource.data;
+      return request.auth != null
+        && validRandomId(workspaceId)
+        && isOwner(data)
+        && validWorkspaceData(data)
+        && data.shared == false
+        && data.deleting == false
+        && data.previousRevision == null
+        && data.createdAt == request.time
+        && data.updatedAt == request.time
+        && chunksMatchByteLength(workspaceId, data.currentRevision, data.chunkCount, data.byteLength);
+    }
+
+    function validRevisionUpdate(workspaceId) {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      return oldData.deleting == false
+        && newData.deleting == false
+        && newData.shared == oldData.shared
+        && newData.previousRevision == oldData.currentRevision
+        && newData.currentRevision != oldData.currentRevision
+        && newData.createdAt == oldData.createdAt
+        && newData.updatedAt == request.time
+        && newData.diff(oldData).affectedKeys().hasOnly([
+          'name',
+          'projectType',
+          'currentRevision',
+          'previousRevision',
+          'chunkCount',
+          'byteLength',
+          'nodeCount',
+          'edgeCount',
+          'updatedAt'
+        ])
+        && validWorkspaceData(newData)
+        && chunksMatchByteLength(workspaceId, newData.currentRevision, newData.chunkCount, newData.byteLength);
+    }
+
+    function validSharingUpdate() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      return oldData.deleting == false
+        && newData.deleting == false
+        && oldData.currentRevision == newData.currentRevision
+        && oldData.previousRevision == newData.previousRevision
+        && oldData.chunkCount == newData.chunkCount
+        && oldData.byteLength == newData.byteLength
+        && oldData.nodeCount == newData.nodeCount
+        && oldData.edgeCount == newData.edgeCount
+        && oldData.name == newData.name
+        && oldData.projectType == newData.projectType
+        && newData.updatedAt == request.time
+        && newData.diff(oldData).affectedKeys().hasOnly(['shared', 'updatedAt'])
+        && validWorkspaceData(newData);
+    }
+
+    function validBeginDelete() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      return oldData.deleting == false
+        && newData.deleting == true
+        && newData.shared == false
+        && oldData.currentRevision == newData.currentRevision
+        && oldData.previousRevision == newData.previousRevision
+        && oldData.chunkCount == newData.chunkCount
+        && oldData.byteLength == newData.byteLength
+        && oldData.nodeCount == newData.nodeCount
+        && oldData.edgeCount == newData.edgeCount
+        && oldData.name == newData.name
+        && oldData.projectType == newData.projectType
+        && newData.updatedAt == request.time
+        && newData.diff(oldData).affectedKeys().hasOnly(['shared', 'deleting', 'updatedAt'])
+        && validWorkspaceData(newData);
+    }
+
+    function validWorkspaceUpdate(workspaceId) {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      return newData.currentRevision != oldData.currentRevision
+        ? validRevisionUpdate(workspaceId)
+        : (newData.deleting != oldData.deleting
+          ? validBeginDelete()
+          : validSharingUpdate());
+    }
+
+    function quotaPath(uid) {
+      return /databases/$(database)/documents/workspaceQuota/$(uid);
+    }
+    function quotaPolicyEnabled() {
+      return get(/databases/$(database)/documents/system/workspaceQuota).data.enabled == true;
+    }
+    function registeredCreate(workspaceId) {
+      let quota = getAfter(quotaPath(request.auth.uid)).data;
+      return quota.lastAction == 'create' && quota.lastWorkspaceId == workspaceId
+        && quota.workspaceIds.hasAny([workspaceId]);
+    }
+    function registeredDelete(workspaceId) {
+      let before = get(quotaPath(request.auth.uid)).data;
+      let after = getAfter(quotaPath(request.auth.uid)).data;
+      return before.workspaceIds.hasAny([workspaceId]) && !after.workspaceIds.hasAny([workspaceId])
+        && after.lastAction == 'delete' && after.lastWorkspaceId == workspaceId;
+    }
+    function validQuotaData(data) {
+      return data.keys().hasAll(['schemaVersion', 'workspaceIds', 'lastWorkspaceId', 'lastAction', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['schemaVersion', 'workspaceIds', 'lastWorkspaceId', 'lastAction', 'createdAt', 'updatedAt'])
+        && data.schemaVersion == 1 && data.workspaceIds is list
+        && data.workspaceIds.size() == data.workspaceIds.toSet().size()
+        && validRandomId(data.lastWorkspaceId)
+        && data.lastAction in ['create', 'delete']
+        && data.createdAt is timestamp && data.updatedAt == request.time;
+    }
+    function quotaAddsWorkspace(uid, oldIds) {
+      let data = request.resource.data;
+      let id = data.lastWorkspaceId;
+      return data.lastAction == 'create' && data.workspaceIds.size() == oldIds.size() + 1
+        && data.workspaceIds.size() <= 20 && !oldIds.hasAny([id])
+        && data.workspaceIds.toSet() == oldIds.toSet().union([id].toSet())
+        && !exists(workspacePath(id)) && existsAfter(workspacePath(id))
+        && getAfter(workspacePath(id)).data.ownerId == uid;
+    }
+    function quotaRemovesWorkspace(uid, oldIds) {
+      let data = request.resource.data;
+      let id = data.lastWorkspaceId;
+      return data.lastAction == 'delete' && oldIds.hasAny([id])
+        && data.workspaceIds.size() == oldIds.size() - 1
+        && data.workspaceIds.toSet() == oldIds.toSet().difference([id].toSet())
+        && exists(workspacePath(id)) && !existsAfter(workspacePath(id))
+        && get(workspacePath(id)).data.ownerId == uid;
+    }
+    match /workspaceQuota/{uid} {
+      allow get: if request.auth != null && request.auth.uid == uid;
+      allow list, delete: if false;
+      allow create: if request.auth != null && request.auth.uid == uid && quotaPolicyEnabled()
+        && validQuotaData(request.resource.data) && request.resource.data.createdAt == request.time
+        && quotaAddsWorkspace(uid, []);
+      allow update: if request.auth != null && request.auth.uid == uid && quotaPolicyEnabled()
+        && validQuotaData(request.resource.data) && request.resource.data.createdAt == resource.data.createdAt
+        && (quotaAddsWorkspace(uid, resource.data.workspaceIds) || quotaRemovesWorkspace(uid, resource.data.workspaceIds));
+    }
+
+    match /workspaces/{workspaceId} {
+      allow get: if exists(workspacePath(workspaceId))
+        && (isOwner(resource.data) || resource.data.shared == true);
+      allow list: if isOwner(resource.data);
+
+      allow create: if validInitialWorkspace(workspaceId) && registeredCreate(workspaceId);
+
+      allow update: if isOwner(resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && validWorkspaceUpdate(workspaceId);
+
+      allow delete: if isOwner(resource.data)
+        && resource.data.shared == false
+        && resource.data.deleting == true
+        && chunksAbsentAfter(workspaceId, resource.data.currentRevision, resource.data.chunkCount)
+        && registeredDelete(workspaceId);
+
+      match /revisions/{revision}/chunks/{chunkIndex} {
+        function currentWorkspacePath() {
+          return /databases/$(database)/documents/workspaces/$(workspaceId);
+        }
+
+        function chunkPayloadIsValid() {
+          return request.resource.data.keys().hasAll(['index', 'payload'])
+            && request.resource.data.keys().hasOnly(['index', 'payload'])
+            && request.resource.data.index is int
+            && request.resource.data.index >= 0
+            && request.resource.data.index < 8
+            && validChunkNumber(chunkIndex, request.resource.data.index)
+            && request.resource.data.payload is bytes
+            && request.resource.data.payload.size() <= 294912;
+        }
+
+        function chunkPayloadIsValidRead() {
+          return resource.data.keys().hasAll(['index', 'payload'])
+            && resource.data.keys().hasOnly(['index', 'payload'])
+            && resource.data.index is int
+            && resource.data.index >= 0
+            && resource.data.index < 8
+            && validChunkNumber(chunkIndex, resource.data.index)
+            && resource.data.payload is bytes
+            && resource.data.payload.size() <= 294912;
+        }
+
+        allow get: if exists(chunkPath(workspaceId, revision, chunkIndex))
+          && exists(currentWorkspacePath())
+          && validRandomId(revision)
+          && chunkPayloadIsValidRead()
+          && resource.data.index < get(currentWorkspacePath()).data.chunkCount
+          && (
+            (
+              isOwner(get(currentWorkspacePath()).data)
+              && get(currentWorkspacePath()).data.currentRevision == revision
+            )
+            || (
+              get(currentWorkspacePath()).data.shared == true
+              && get(currentWorkspacePath()).data.currentRevision == revision
+            )
+          );
+
+        allow list: if false;
+
+        allow create: if request.auth != null
+          && validRandomId(workspaceId)
+          && validRandomId(revision)
+          && chunkPayloadIsValid()
+          && existsAfter(currentWorkspacePath())
+          && getAfter(currentWorkspacePath()).data.ownerId == request.auth.uid
+          && getAfter(currentWorkspacePath()).data.currentRevision == revision
+          && getAfter(currentWorkspacePath()).data.deleting == false
+          && request.resource.data.index < getAfter(currentWorkspacePath()).data.chunkCount
+          && (
+            exists(currentWorkspacePath())
+              ? get(currentWorkspacePath()).data.ownerId == request.auth.uid
+                && get(currentWorkspacePath()).data.currentRevision != revision
+                && getAfter(currentWorkspacePath()).data.previousRevision == get(currentWorkspacePath()).data.currentRevision
+              : getAfter(currentWorkspacePath()).data.previousRevision == null
+          );
+
+        allow update: if false;
+
+        allow delete: if request.auth != null
+          && exists(currentWorkspacePath())
+          && get(currentWorkspacePath()).data.ownerId == request.auth.uid
+          && resource.data.index < get(currentWorkspacePath()).data.chunkCount
+          && (
+            existsAfter(currentWorkspacePath())
+              ? get(currentWorkspacePath()).data.ownerId == request.auth.uid
+                && get(currentWorkspacePath()).data.currentRevision == revision
+                && getAfter(currentWorkspacePath()).data.currentRevision != revision
+                && getAfter(currentWorkspacePath()).data.previousRevision == revision
+              : get(currentWorkspacePath()).data.currentRevision == revision
+                && get(currentWorkspacePath()).data.shared == false
+                && get(currentWorkspacePath()).data.deleting == true
+          );
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

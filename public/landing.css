@@ -264,3 +264,40 @@ button:focus-visible, a:focus-visible, textarea:focus-visible, [tabindex="0"]:fo
   .preview-scroll-hint { display: block; margin: 8px 4px 0; color: var(--landing-quiet); font-size: 9px; text-align: right; }
 }
 .preview-node:focus-visible { outline: none; }
+
+/* Shared account panel presentation for the landing sign-in flow. */
+.landing-sign-in{min-height:39px;padding-inline:14px;font-size:12px;white-space:nowrap}
+.account-dialog{width:min(560px,calc(100% - 28px));max-width:none;max-height:min(90vh,760px);padding:0;overflow:auto;border:1px solid var(--landing-border);border-radius:22px;color:var(--landing-ink);background:var(--landing-card);box-shadow:0 26px 90px #0008}
+.account-dialog::backdrop{background:#0009;backdrop-filter:blur(4px)}
+.account-dialog-card{padding:25px}
+.account-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.account-dialog-head h2{margin:10px 0 7px;font-size:25px;font-weight:560;letter-spacing:-.04em}
+.account-dialog-head>div>p:last-child{max-width:410px;margin:0;color:var(--landing-muted);font-size:13px;line-height:1.6}
+.account-dialog .dialog-close{flex:0 0 35px}
+.account-identity-card{display:flex;align-items:center;gap:12px;margin-top:20px;padding:13px;border:1px solid var(--landing-border);border-radius:14px;background:color-mix(in srgb,var(--landing-canvas),transparent 28%)}
+.account-avatar{display:grid;flex:0 0 40px;place-items:center;width:40px;height:40px;border:1px solid var(--landing-border);border-radius:50%;color:var(--atlas-accent-ink,#272b1b);background:var(--landing-accent);font-size:16px;font-weight:700}
+.account-identity-card>div{min-width:0;display:grid;gap:4px}
+.account-identity-card strong{color:var(--landing-ink);font-size:12px;font-weight:650}
+.account-identity-card span:not(.account-avatar){color:var(--landing-muted);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.account-actions{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:15px}
+.google-continue{min-width:210px;color:var(--landing-ink);background:var(--landing-canvas);border-color:var(--landing-border)}
+.google-continue:hover{background:var(--landing-card);border-color:var(--landing-muted)}
+.google-continue svg{width:18px;height:18px;flex:0 0 auto}
+.account-workspace-link{text-decoration:none}
+.account-security-note{margin:14px 0 0;color:var(--landing-muted);font-size:11px;line-height:1.6}
+.account-error{margin-top:12px;padding:10px 12px;border:1px solid #845c54;border-radius:10px;color:var(--landing-ink);background:color-mix(in srgb,#8e4e44,transparent 80%);font-size:12px;line-height:1.5}
+.account-error[hidden]{display:none}
+.account-dialog-foot{display:flex;justify-content:flex-end;margin-top:20px;padding-top:13px;border-top:1px solid var(--landing-border)}
+@media(max-width:700px){
+  .landing-sign-in{min-height:38px;padding-inline:10px;font-size:11px}
+  .account-dialog-card{padding:18px 16px}
+  .account-dialog-head h2{font-size:22px}
+  .account-dialog-head>div>p:last-child{font-size:12px}
+  .account-actions{align-items:stretch;flex-direction:column}
+  .account-actions>.button{width:100%;min-height:42px}
+}
+@media(prefers-reduced-motion:reduce){.landing-sign-in{transition:none}}
+@media(max-width:540px){.header-nav{display:none}}
+
+/* Keep account actions consistent with the confirmed authentication state. */
+.account-dialog [hidden]{display:none}

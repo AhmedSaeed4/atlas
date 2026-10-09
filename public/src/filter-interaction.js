@@ -8,42 +8,56 @@ export function isTouchClick(event, pointerDownType = "") {
 
 export function transitionTypeInteractions(state, action) {
   let focusedType = state.focusedType || "";
+  let lockedType = state.lockedType || "";
   let touchInteractionActive = Boolean(state.touchInteractionActive);
   const excludedTypes = new Set(state.excludedTypes || []);
 
   switch (action.kind) {
     case "activate-all":
+      lockedType = "";
       focusedType = "";
       excludedTypes.clear();
       touchInteractionActive = isTouchClick(action, action.pointerDownType);
       break;
     case "activate-type":
       if (isTouchClick(action, action.pointerDownType)) {
+        lockedType = "";
         focusedType = focusedType === action.type ? "" : action.type;
         touchInteractionActive = true;
       } else {
-        if (excludedTypes.has(action.type)) excludedTypes.delete(action.type);
-        else excludedTypes.add(action.type);
+        if (excludedTypes.has(action.type)) {
+          excludedTypes.delete(action.type);
+          lockedType = "";
+        } else if (lockedType === action.type) {
+          excludedTypes.add(action.type);
+          lockedType = "";
+        } else lockedType = action.type;
+        focusedType = lockedType;
         touchInteractionActive = false;
       }
       break;
     case "pointer-over":
-      if (action.pointerType !== "touch") {
-        focusedType = action.type || "";
+      if (action.pointerType !== "touch" && !lockedType) {
+        focusedType = excludedTypes.has(action.type) ? "" : action.type || "";
         touchInteractionActive = false;
       }
       break;
     case "pointer-out":
-      if (action.pointerType !== "touch") {
-        focusedType = action.relatedType || "";
+      if (action.pointerType !== "touch" && !lockedType) {
+        focusedType = excludedTypes.has(action.relatedType) ? "" : action.relatedType || "";
         touchInteractionActive = false;
       }
       break;
     case "focus":
-      if (!touchInteractionActive || action.inputType === "keyboard") {
-        focusedType = action.type || "";
+      if (!lockedType && (!touchInteractionActive || action.inputType === "keyboard")) {
+        focusedType = excludedTypes.has(action.type) ? "" : action.type || "";
         if (action.inputType === "keyboard") touchInteractionActive = false;
       }
+      break;
+    case "clear-highlight":
+      lockedType = "";
+      focusedType = "";
+      touchInteractionActive = false;
       break;
     case "reset-filters":
       excludedTypes.clear();
@@ -52,7 +66,7 @@ export function transitionTypeInteractions(state, action) {
       throw new TypeError("Unknown type interaction: " + action.kind);
   }
 
-  return { focusedType, excludedTypes, touchInteractionActive };
+  return { focusedType, lockedType, excludedTypes, touchInteractionActive };
 }
 
 export function isCurrentTouchEdgeSelection(selection, selectedEdgeId, activeProjectId, activeGraph) {

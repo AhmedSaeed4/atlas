@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#171916">
+    <meta name="color-scheme" content="dark">
+    <style id="initial-canvas">html{color-scheme:dark;background:#171916;color:#f0f2e8}html[data-theme="light"]{color-scheme:light;background:#dedfd7;color:#242721}body{margin:0;background:inherit}</style>
     <meta name="description" content="Turn repository evidence into a clear, interactive architecture map for any software project. Private by default and built for static hosting.">
     <title>Atlas — software architecture, in view</title>
     <script src="./src/theme.js"></script>
@@ -28,7 +30,8 @@
               <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M16.8 12.1A6.8 6.8 0 0 1 7.9 3.2 6.9 6.9 0 1 0 16.8 12.1Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
               <span id="theme-value">Dark</span>
             </button>
-            <a class="button button-primary header-open" href="./workspace.html">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
+            <button class="button button-secondary landing-sign-in" id="landing-sign-in" data-open-account type="button" aria-controls="account-modal" aria-expanded="false"><span id="account-control-label">Sign in</span></button>
+            <a class="button button-primary header-open" href="./workspace">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
           </div>
         </div>
       </header>
@@ -41,12 +44,12 @@
             <p class="hero-intro">Atlas turns repository evidence into an interactive architecture map for <strong>any software project</strong>—from a service or desktop app to a library, CLI, or mixed system.</p>
             <p class="hero-support">Start with the coding agent already working in your project. Then explore, refine, and keep the map in this browser.</p>
             <div class="hero-actions">
-              <a class="button button-primary" href="./workspace.html">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
+              <a class="button button-primary" href="./workspace">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
               <button class="button button-secondary" type="button" data-open-prompt>Copy agent prompt</button>
             </div>
             <div class="hero-example">
               <span>Want a quick look?</span>
-              <a href="./workspace.html?example=flow">Open the sample map <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11m-5-5 5 5-5 5"/></svg></a>
+              <a href="./workspace?example=flow">Open the sample map <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11m-5-5 5 5-5 5"/></svg></a>
             </div>
             <ul class="product-facts" aria-label="Atlas features">
               <li><span class="fact-dot"></span>Any software project</li>
@@ -161,14 +164,14 @@
             <h2 id="sample-title">See the map before you bring your own.</h2>
             <p>The sample uses fictional software components. It contains no repository or customer data.</p>
           </div>
-          <a class="button button-secondary" href="./workspace.html?example=flow">Explore the sample map <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11m-5-5 5 5-5 5"/></svg></a>
+          <a class="button button-secondary" href="./workspace?example=flow">Explore the sample map <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M4 10h11m-5-5 5 5-5 5"/></svg></a>
         </section>
 
         <section class="privacy-section content-width" id="privacy" aria-labelledby="privacy-title">
           <div class="privacy-intro">
             <p class="eyebrow landing-eyebrow"><span class="eyebrow-dot"></span> PRIVATE BY DESIGN</p>
             <h2 id="privacy-title">Your project map stays yours.</h2>
-            <p>Atlas is a static browser app. It has no account, analytics, or service that receives your map.</p>
+            <p>Atlas starts in your browser, without an account. Sign-in gives you access to account maps; future maps upload only if you separately enable that preference. Online links are live and view-only. Atlas has no analytics or AI service.</p>
           </div>
           <div class="privacy-grid">
             <article class="privacy-card">
@@ -176,7 +179,7 @@
                 <svg viewBox="0 0 24 24"><path d="M12 3 19 6v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4"/></svg>
               </span>
               <h3>Local to this browser</h3>
-              <p>Maps and edits are kept in browser storage. Atlas does not upload repository files or graph data. Clearing this browser’s storage removes local maps, so export a JSON backup first if you want to keep them.</p>
+              <p>Maps and edits are kept in browser storage by default. Signing in alone does not upload maps. If you turn on save-new-maps in Settings, future maps upload to your account; existing local maps stay here until you choose to move one. Atlas never uploads repository files. Clearing this browser's storage removes local maps, so export a JSON backup first if you want to keep them.</p>
             </article>
             <article class="privacy-card">
               <span class="privacy-icon" aria-hidden="true">
@@ -190,7 +193,7 @@
                 <svg viewBox="0 0 24 24"><path d="M10 13a4 4 0 0 0 6 .4l3-3a4 4 0 0 0-5.7-5.6l-1.7 1.7M14 11a4 4 0 0 0-6-.4l-3 3a4 4 0 0 0 5.7 5.6l1.7-1.7"/></svg>
               </span>
               <h3>Share intentionally</h3>
-              <p>A share link carries a snapshot in its URL fragment, after #; that fragment is not sent in the page request. Anyone with the full link can open that snapshot. A recipient edits their own copy, which does not change yours.</p>
+              <p>Local links contain independent snapshots. Optional online links open your live map: only you edit it, and you can stop sharing or delete it. Anyone with an enabled online link can view its content; share only information suitable for recipients.</p>
             </article>
           </div>
           <p class="privacy-note"><strong>Agent access is separate:</strong> the copied prompt goes to the coding agent you choose. That agent's own data handling applies; Atlas does not read your repository.</p>
@@ -203,10 +206,11 @@
           <span>Atlas</span>
         </a>
         <p>Architecture maps for any software project.</p>
-        <a href="./workspace.html">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
+        <a href="./workspace">Open Atlas <svg class="ui-icon cta-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 15 15 5M7 5h8v8"/></svg></a>
       </footer>
     </div>
 
+    <dialog class="account-dialog" id="account-modal" aria-labelledby="account-title"><div class="account-dialog-card"><div class="account-dialog-head"><div><p class="eyebrow landing-eyebrow"><span class="eyebrow-dot"></span> YOUR ATLAS ACCOUNT</p><h2 id="account-title">Account</h2><p>Sign in to access maps saved to your Atlas account. Signing in alone never uploads a map or turns on automatic saving.</p></div><button class="dialog-close" type="button" data-account-close aria-label="Close account"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5 15 15M15 5 5 15"/></svg></button></div><div class="account-identity-card"><span class="account-avatar" aria-hidden="true">A</span><div><strong id="account-status" role="status" aria-live="polite">Account status</strong><span id="account-identity">No account signed in.</span></div></div><div class="account-error" id="account-error" role="alert" hidden></div><div class="account-actions"><button class="button button-secondary google-continue" id="account-sign-in" type="button"><svg viewBox="0 0 48 48" aria-hidden="true" focusable="false"><path fill="#4285F4" d="M43.6 24.5c0-1.4-.1-2.8-.4-4.1H24v7.8h11a9.4 9.4 0 0 1-4.1 6.2v5.1h6.7c3.9-3.6 6-8.8 6-15Z"/><path fill="#34A853" d="M24 44c5.5 0 10.1-1.8 13.5-4.8l-6.7-5.1c-1.8 1.2-4.1 1.9-6.8 1.9-5.2 0-9.6-3.5-11.2-8.2H5.9v5.2C9.3 39.5 16.1 44 24 44Z"/><path fill="#FBBC05" d="M12.8 27.8a12 12 0 0 1 0-7.6V15H5.9a20 20 0 0 0 0 17.9l6.9-5.1Z"/><path fill="#EA4335" d="M24 12.1c3 0 5.7 1 7.8 3.1l5.8-5.8C34.1 6.2 29.5 4 24 4 16.1 4 9.3 8.5 5.9 15l6.9 5.2c1.6-4.7 6-8.1 11.2-8.1Z"/></svg><span>Continue with Google</span></button><button class="button button-secondary" id="account-sign-out" type="button" hidden>Sign out</button><button class="button button-secondary" id="account-retry" type="button" hidden>Try again</button><a class="button button-secondary account-workspace-link" id="account-workspace-link" href="./workspace" hidden>Open workspace</a></div><p class="account-security-note">Atlas uses your Google sign-in only for account access. Each account can store up to 20 Cloud Workspaces; this limit does not apply to local maps. Maps created or imported while signed out stay in this browser after you sign in. In the workspace, you can choose whether future maps are saved online in Settings.</p><div class="account-dialog-foot"><button class="button button-secondary" type="button" data-account-close>Close</button></div></div></dialog>
     <dialog class="prompt-dialog" id="prompt-dialog" aria-labelledby="prompt-dialog-title">
       <div class="prompt-dialog-card">
         <div class="prompt-dialog-head">
