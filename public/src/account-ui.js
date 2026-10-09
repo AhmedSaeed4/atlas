@@ -87,6 +87,18 @@ export function initAccountPanel({ root = document, account, startProgress = sta
   const errorBox = byId(root, "account-error");
   const controlLabel = byId(root, "account-control-label");
   const workspaceLink = byId(root, "account-workspace-link");
+  const adminLink = byId(root, "account-admin-link");
+  let adminLinkEpoch = 0, adminLinkUid = null;
+  function updateAdminLink(user) {
+    if (!adminLink || adminLinkUid === (user?.uid || "")) return;
+    adminLinkUid = user?.uid || "";
+    const scope = ++adminLinkEpoch;
+    adminLink.hidden = true;
+    if (!adminLinkUid || !account.getService) return;
+    void account.getService().then(service => service.getAdminAccess?.()).then(access => {
+      if (scope === adminLinkEpoch && account.getState?.().user?.uid === adminLinkUid) adminLink.hidden = access?.isAdmin !== true;
+    }).catch(() => {});
+  }
   if (!dialog || !account || !status || !identity || !signIn || !signOut) return () => {};
 
   let initializationRequested = false;
@@ -100,6 +112,7 @@ export function initAccountPanel({ root = document, account, startProgress = sta
     if (!busy && finishProgress) { finishProgress(); finishProgress = null; }
     lastState = state || { status: "idle", user: null };
     const view = getAccountPresentation(lastState);
+    updateAdminLink(lastState.user);
     status.textContent = busy && retryAction === "signIn" ? "Waiting for Google sign-in…" : busy && retryAction === "signOut" ? "Signing out…" : view.statusText;
     status.setAttribute("aria-busy", String(busy || view.initializing));
     identity.textContent = view.identityText;
@@ -210,7 +223,7 @@ export function initAccountPanel({ root = document, account, startProgress = sta
   // Both the landing page and workspace use this panel. Restore without opening
   // it; first-time local visitors still do not load the Firebase service.
   if (typeof account.restore === "function") void account.restore().catch(() => {});
-  return () => { if (typeof unsubscribe === "function") unsubscribe(); };
+  return () => { adminLinkEpoch += 1; if (typeof unsubscribe === "function") unsubscribe(); };
 }
 
 export function initSettingsPanel({ root = document, account } = {}) {

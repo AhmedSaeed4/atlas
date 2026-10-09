@@ -209,3 +209,17 @@ test("synchronous adapter auth failure reaches a late account subscriber", () =>
   assert.match(seen.message, /startup failed/);
   service.dispose();
 });
+
+
+test("admin allowance requests validate target/value/session before writes and reject late account changes", async () => {
+  const setup = makeAdapter(); let complete; let writes = 0;
+  setup.adapter.getAdminAccess = async () => ({ isAdmin: true });
+  setup.adapter.setAccountLimit = () => { writes += 1; return new Promise(resolve => { complete = resolve; }); };
+  const service = createCloudService({ adapter: setup.adapter });
+  await assert.rejects(service.setAccountLimit({ targetUid: "member", maxWorkspaces: null, expectedUpdatedAt: null, expectedAdminUid: "other" }), { code: "account-changed" });
+  await assert.rejects(service.setAccountLimit({ targetUid: "member", maxWorkspaces: 100, expectedUpdatedAt: null, expectedAdminUid: "owner-1" }), { code: "invalid-limit" });
+  assert.equal(writes, 0);
+  const request = service.setAccountLimit({ targetUid: "member", maxWorkspaces: 40, expectedUpdatedAt: null, expectedAdminUid: "owner-1" }); await settle();
+  setup.setUser({ uid: "other" }); complete({ maxWorkspaces: 40 });
+  await assert.rejects(request, { code: "account-changed" }); service.dispose();
+});

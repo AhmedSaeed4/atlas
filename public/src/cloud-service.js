@@ -12,6 +12,10 @@ import {
   Bytes,
   collection,
   doc,
+  documentId,
+  limit,
+  orderBy,
+  startAfter,
   getDocFromServer,
   getDocsFromServer,
   initializeFirestore,
@@ -39,7 +43,8 @@ import {
 
 const APP_NAME = "atlas-online-workspaces";
 const WORKSPACES = "workspaces";
-import { CloudQuotaError, addRegistryWorkspace, removeRegistryWorkspace } from "./cloud-quota.js";
+import { CloudQuotaError, addRegistryWorkspace, removeRegistryWorkspace, registryWorkspaceIds } from "./cloud-quota.js";
+import { accountProfileFromClaims, accountUid, timestampText, validateWorkspaceLimit, workspaceLimit } from "./account-access.js";
 
 
 export class CloudServiceError extends Error {
@@ -169,6 +174,31 @@ export function createFirebaseAdapter(config, {
     : getDocFromServer;
   const workspaceRef = (id) => doc(db, WORKSPACES, id);
   const quotaRef = (uid) => doc(db, "workspaceQuota", uid);
+  const profileRef = (uid) => doc(db, "accountProfiles", accountUid(uid));
+  const limitRef = (uid) => doc(db, "accountLimits", accountUid(uid));
+  const adminRef = () => doc(db, "system", "adminAccess");
+  async function assertAdmin(uid) {
+    await authSessionReady(uid);
+    const snapshot = await getDocFromServer(adminRef());
+    await authSessionReady(uid);
+    if (!snapshot.exists() || snapshot.data().adminUid !== uid) {
+      throw new CloudServiceError("This page is only available to the administrator.", "admin-required", { status: "permission-denied" });
+    }
+  }
+  async function syncAccountProfile(user) {
+    if (typeof user?.getIdTokenResult !== "function") return;
+    const token = await user.getIdTokenResult();
+    const profile = accountProfileFromClaims(user.uid, token.claims);
+    if (!profile) return;
+    await authSessionReady(user.uid);
+    await runTransaction(db, async transaction => {
+      const current = await transaction.get(profileRef(user.uid));
+      const old = current.exists() ? current.data() : null;
+      if (old?.name === profile.name && old?.email === profile.email && old?.schemaVersion === 1 && old?.uid === user.uid) return;
+      await authSessionReady(user.uid);
+      transaction.set(profileRef(user.uid), { ...profile, createdAt: old?.createdAt || serverTimestamp(), updatedAt: serverTimestamp() });
+    });
+  }
   const revisionRef = (id, revision) => doc(db, WORKSPACES, id, "revisions", revision);
   const chunksCollection = (id, revision) => collection(revisionRef(id, revision), "chunks");
   const chunkRef = (id, revision, index) => doc(chunksCollection(id, revision), String(index));
@@ -361,9 +391,57 @@ export function createFirebaseAdapter(config, {
     // Observe only after the SDK has restored the persisted session.
     observeAuth: (callback) => subscribeWhenReady(
       persistenceReady,
-      () => firebaseOnAuthStateChanged(auth, (user) => callback(user), (error) => callback(null, error)),
+      () => firebaseOnAuthStateChanged(auth, (user) => {
+        callback(user);
+        // Directory metadata is optional and never delays sign-in or stores tokens.
+        if (user) void syncAccountProfile(user).catch(() => {});
+      }, (error) => callback(null, error)),
       (error) => callback(null, error),
     ),
+    getAdminAccess: async uid => {
+      await authSessionReady(uid);
+      const snapshot = await getDocFromServer(adminRef());
+      await authSessionReady(uid);
+      return { isAdmin: snapshot.exists() && snapshot.data().adminUid === uid };
+    },
+    listAdminAccounts: async (uid, afterUid = "") => {
+      await assertAdmin(uid);
+      const constraints = [orderBy(documentId()), limit(50)];
+      if (afterUid) constraints.push(startAfter(accountUid(afterUid)));
+      const page = await getDocsFromServer(query(collection(db, "accountProfiles"), ...constraints));
+      const accounts = await Promise.all(page.docs.map(async entry => {
+        const [allowance, usage] = await Promise.all([getDocFromServer(limitRef(entry.id)), getDocFromServer(quotaRef(entry.id))]);
+        const profile = entry.data();
+        return Object.freeze({ uid: entry.id, name: String(profile.name || ""), email: String(profile.email || ""),
+          maxWorkspaces: workspaceLimit(allowance.exists() ? allowance.data() : null),
+          allowanceUpdatedAt: allowance.exists() ? timestampText(allowance.data().updatedAt) : null,
+          workspaceCount: usage.exists() ? registryWorkspaceIds(usage.data()).length : null,
+          isAdmin: entry.id === uid });
+      }));
+      await authSessionReady(uid);
+      return { accounts, nextCursor: page.size === 50 ? page.docs.at(-1).id : null };
+    },
+    setAccountLimit: async (uid, targetUid, maximum, expectedUpdatedAt) => {
+      await authSessionReady(uid);
+      validateWorkspaceLimit(maximum);
+      accountUid(targetUid);
+      await runTransaction(db, async transaction => {
+        const [admin, profile, oldLimit] = await Promise.all([
+          transaction.get(adminRef()), transaction.get(profileRef(targetUid)), transaction.get(limitRef(targetUid)),
+        ]);
+        await authSessionReady(uid);
+        if (!admin.exists() || admin.data().adminUid !== uid) throw new CloudServiceError("Administrator access is required.", "admin-required", { status: "permission-denied" });
+        if (!profile.exists()) throw new CloudServiceError("This account is no longer in the directory. Refresh the list.", "account-not-found");
+        const oldTime = oldLimit.exists() ? timestampText(oldLimit.data().updatedAt) : null;
+        if (oldTime !== expectedUpdatedAt) throw new CloudServiceError("This allowance changed in another tab. Refresh before saving.", "admin-conflict", { status: "conflict" });
+        if (targetUid === uid && maximum !== null) throw new CloudServiceError("The administrator keeps unlimited access.", "invalid-limit");
+        transaction.set(limitRef(targetUid), { schemaVersion: 1, maxWorkspaces: maximum, updatedBy: uid, updatedAt: serverTimestamp() });
+      });
+      // A post-commit read supplies the authoritative timestamp for the next edit.
+      const saved = await getDocFromServer(limitRef(targetUid));
+      await authSessionReady(uid);
+      return { maxWorkspaces: workspaceLimit(saved.data()), allowanceUpdatedAt: timestampText(saved.data().updatedAt) };
+    },
     signInGoogle: async () => {
       await persistenceReady;
       const provider = new GoogleAuthProvider();
@@ -422,12 +500,23 @@ export function createFirebaseAdapter(config, {
         // Keep the lost-response test seam around the entire atomic commit.
         await commitBatch({ commit: () => runTransaction(db, async (transaction) => {
           const quota = await transaction.get(quotaRef(uid));
+          // The read participates in the transaction, so concurrent allowance
+          // changes retry admission against the new server policy.
+          let allowance;
+          try { allowance = await transaction.get(limitRef(uid)); }
+          catch (error) {
+            // Older rules do not expose allowances. Keeping the default cap is
+            // safe during rollout; every write still requires server approval.
+            if (error?.code !== "permission-denied") throw error;
+            await authSessionReady(uid);
+          }
+          const maximum = workspaceLimit(allowance?.exists() ? allowance.data() : null);
           if (!quota.exists()) {
             const legacy = await getDocsFromServer(query(collection(db, WORKSPACES), where("ownerId", "==", uid)));
             if (!legacy.empty) throw new CloudQuotaError("Cloud Workspace usage needs setup for this account. Existing maps are unchanged; keep this new map locally for now.", "quota-uninitialized");
           }
           const previous = quota.exists() ? quota.data() : null;
-          const workspaceIds = addRegistryWorkspace(previous, id);
+          const workspaceIds = addRegistryWorkspace(previous, id, maximum);
           for (const chunk of encoded.chunks) transaction.set(chunkRef(id, revision, chunk.index), chunkData(chunk));
           transaction.set(reference, metadata);
           transaction.set(quotaRef(uid), {
@@ -641,6 +730,9 @@ function disabledAdapter() {
       queueMicrotask(() => callback(null));
       return () => {};
     },
+    getAdminAccess: fail,
+    listAdminAccounts: fail,
+    setAccountLimit: fail,
     signInGoogle: fail,
     signOut: fail,
     listWorkspaces: fail,
@@ -941,6 +1033,15 @@ export function createCloudService({
         ))
         : [];
       return Object.freeze({ status: "ready", workspaces });
+    }),
+    getAdminAccess: () => withSession(({ uid }) => adapter.getAdminAccess(uid)),
+    listAdminAccounts: ({ afterUid = "" } = {}) => withSession(({ uid }) => adapter.listAdminAccounts(uid, afterUid)),
+    setAccountLimit: ({ targetUid, maxWorkspaces, expectedUpdatedAt, expectedAdminUid } = {}) => withSession(({ uid }) => {
+      if (uid !== expectedAdminUid) throw new CloudServiceError("Your account changed. Refresh before updating access.", "account-changed", { status: "unauthenticated" });
+      accountUid(targetUid);
+      validateWorkspaceLimit(maxWorkspaces);
+      if (expectedUpdatedAt !== null && typeof expectedUpdatedAt !== "string") throw new CloudServiceError("Refresh the account allowance before saving.", "invalid-limit");
+      return adapter.setAccountLimit(uid, targetUid, maxWorkspaces, expectedUpdatedAt);
     }),
     watchOwnedWorkspaces,
     createWorkspace: ({ name, graph, workspaceId, expectedOwnerUid } = {}) => withSession(async ({ uid }) => {

@@ -803,3 +803,140 @@ test("grandfathered over-limit maps remain editable and deletable without an aut
   assert.equal((await getDoc(workspaceRef(database,ids[0]))).data().name,"Still editable");
   service.dispose();
 });
+
+
+async function seedAdminDirectory(uids = ["admin", "member"]) {
+  await env.withSecurityRulesDisabled(async context => {
+    const database = context.firestore();
+    await setDoc(doc(database, "system", "adminAccess"), { schemaVersion: 1, adminUid: "admin" });
+    for (const uid of uids) await setDoc(doc(database, "accountProfiles", uid), { schemaVersion: 1, uid, name: uid, email: uid + "@example.test", createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    await setDoc(doc(database, "accountLimits", "admin"), { schemaVersion: 1, maxWorkspaces: null, updatedBy: "admin", updatedAt: serverTimestamp() });
+  });
+}
+const allowanceRef = (database, uid = "member") => doc(database, "accountLimits", uid);
+const allowanceData = (maximum, uid = "admin") => ({ schemaVersion: 1, maxWorkspaces: maximum, updatedBy: uid, updatedAt: serverTimestamp() });
+
+test("sole administrator can read the private directory and usage without gaining access to private maps", async () => {
+  await seedAdminDirectory(); await seedAccountCount("member", 1);
+  const admin = env.authenticatedContext("admin").firestore(), member = env.authenticatedContext("member").firestore(), publicDb = env.unauthenticatedContext().firestore();
+  assert.equal((await assertSucceeds(getDocs(collection(admin, "accountProfiles")))).size, 2);
+  await assertSucceeds(getDoc(quotaRef(admin, "member")));
+  await assertFails(getDocs(collection(member, "accountProfiles")));
+  await assertFails(getDoc(doc(member, "accountProfiles", "admin")));
+  await assertFails(getDocs(collection(publicDb, "accountProfiles")));
+  await assertFails(getDoc(allowanceRef(publicDb, "admin")));
+  const owned = await getDoc(quotaRef(member, "member"));
+  await assertFails(getDoc(workspaceRef(admin, owned.data().workspaceIds[0])));
+});
+
+test("clients cannot bootstrap or replace the sole administrator, including through fake admin claims", async () => {
+  await seedAdminDirectory();
+  for (const uid of ["admin", "member"]) {
+    const database = env.authenticatedContext(uid, { admin: true, email: "admin@example.test", email_verified: true }).firestore();
+    await assertFails(setDoc(doc(database, "system", "adminAccess"), { adminUid: uid }));
+    await assertFails(deleteDoc(doc(database, "system", "adminAccess")));
+    if (uid !== "admin") await assertFails(setDoc(allowanceRef(database), allowanceData(null, uid)));
+    if (uid !== "admin") await assertFails(getDoc(allowanceRef(database, "admin")));
+  }
+});
+
+test("only administrator can grant30/40/unlimited or restore20, with validated account/audit fields", async () => {
+  await seedAdminDirectory(); const admin = env.authenticatedContext("admin").firestore(), member = env.authenticatedContext("member").firestore();
+  for (const maximum of [30, 40, null, 20]) {
+    await assertSucceeds(setDoc(allowanceRef(admin), allowanceData(maximum)));
+    assert.equal((await assertSucceeds(getDoc(allowanceRef(member)))).data().maxWorkspaces, maximum);
+    await assertFails(setDoc(allowanceRef(member), allowanceData(null, "member")));
+  }
+  for (const maximum of [false, "unlimited", 100, -1]) await assertFails(setDoc(allowanceRef(admin), allowanceData(maximum)));
+  await assertFails(setDoc(allowanceRef(admin), { ...allowanceData(30), updatedBy: "member" }));
+  await assertFails(setDoc(allowanceRef(admin), { ...allowanceData(30), role: "admin" }));
+  await assertFails(setDoc(allowanceRef(admin), { ...allowanceData(30), updatedAt: new Date() }));
+  await assertFails(setDoc(allowanceRef(admin, "unknown"), allowanceData(30)));
+  await assertFails(setDoc(allowanceRef(admin, "admin"), allowanceData(20)));
+  await assertFails(deleteDoc(allowanceRef(admin, "admin")));
+  await assertSucceeds(deleteDoc(allowanceRef(admin)));
+});
+
+test("profile enrollment is confined to verified own token claims and grants no privileges", async () => {
+  await seedAdminDirectory();
+  const uid = "new-member", claims = { email: "new@example.test", email_verified: true, name: "New member" };
+  const database = env.authenticatedContext(uid, claims).firestore();
+  const reference = doc(database, "accountProfiles", uid);
+  const profile = { schemaVersion: 1, uid, name: claims.name, email: claims.email, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+  await assertSucceeds(setDoc(reference, profile));
+  await assertFails(updateDoc(reference, { email: "admin@example.test", updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(reference, { name: "Fake", updatedAt: serverTimestamp() }));
+  await assertFails(updateDoc(reference, { admin: true, updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(database, "accountProfiles", "admin"), { ...profile, uid: "admin" }));
+  await assertFails(deleteDoc(reference));
+  const unverified = env.authenticatedContext("unverified", { ...claims, email_verified: false }).firestore();
+  await assertFails(setDoc(doc(unverified, "accountProfiles", "unverified"), { ...profile, uid: "unverified" }));
+});
+
+test("production admin adapter lists names/counts, grants limits and guards stale concurrent edits", async () => {
+  await seedAdminDirectory(); await seedAccountCount("member", 2);
+  const { service } = productionAdapterService("admin", env.authenticatedContext("admin").firestore(), []);
+  assert.equal((await service.getAdminAccess()).isAdmin, true);
+  const directory = await service.listAdminAccounts();
+  const member = directory.accounts.find(row => row.uid === "member");
+  assert.equal(member.workspaceCount, 2); assert.equal(member.maxWorkspaces, 20);
+  const granted = await service.setAccountLimit({ targetUid: "member", maxWorkspaces: 40, expectedUpdatedAt: null, expectedAdminUid: "admin" });
+  assert.equal(granted.maxWorkspaces, 40); assert.ok(granted.allowanceUpdatedAt);
+  await assert.rejects(service.setAccountLimit({ targetUid: "member", maxWorkspaces: 30, expectedUpdatedAt: null, expectedAdminUid: "admin" }), { code: "admin-conflict" });
+  await service.setAccountLimit({ targetUid: "member", maxWorkspaces: 20, expectedUpdatedAt: granted.allowanceUpdatedAt, expectedAdminUid: "admin" });
+  const { service: denied } = productionAdapterService("member", env.authenticatedContext("member").firestore(), []);
+  assert.equal((await denied.getAdminAccess()).isAdmin, false);
+  await assert.rejects(denied.listAdminAccounts(), { code: "admin-required" });
+  service.dispose(); denied.dispose();
+});
+
+test("custom30/40 caps and unlimited are enforced by production admission and database rules", async () => {
+  await seedAdminDirectory(["admin", "limit-30", "limit-40", "unlimited"]);
+  const admin = env.authenticatedContext("admin").firestore();
+  for (const maximum of [30, 40, null]) {
+    const uid = maximum === null ? "unlimited" : "limit-" + maximum;
+    const count = maximum === null ? 42 : maximum - 1;
+    await seedAccountCount(uid, count);
+    await setDoc(allowanceRef(admin, uid), allowanceData(maximum));
+    const database = env.authenticatedContext(uid).firestore();
+    const { service } = productionAdapterService(uid, database, Array(12).fill(REVISION_B));
+    const candidate = (maximum === 30 ? "M" : maximum === 40 ? "N" : "U").repeat(22);
+    await service.createWorkspace({ graph: tinyGraph, workspaceId: candidate });
+    assert.equal((await getDoc(quotaRef(database, uid))).data().workspaceIds.length, count + 1);
+    if (maximum !== null) {
+      await assert.rejects(service.createWorkspace({ graph: tinyGraph, workspaceId: "X".repeat(22) }), { code: "workspace-limit" });
+      const encoded = encodeCloudGraph(tinyGraph), next = "Y".repeat(22), bypass = writeBatch(database);
+      for (const chunk of encoded.chunks) bypass.set(chunkRef(database, next, REVISION_B, chunk.index), firestoreChunk(chunk));
+      bypass.set(workspaceRef(database, next), makeMetadata(uid, REVISION_B, encoded.json, encoded.chunks));
+      const ids = (await getDoc(quotaRef(database, uid))).data().workspaceIds;
+      bypass.update(quotaRef(database, uid), { workspaceIds: [...ids, next], lastWorkspaceId: next, lastAction: "create", updatedAt: serverTimestamp() });
+      await assertFails(bypass.commit());
+    }
+    service.dispose();
+  }
+});
+
+test("downgrading an over-limit member keeps editing/export/delete and rejects only new admissions", async () => {
+  await seedAdminDirectory(); const ids = await seedAccountCount("member", 30);
+  const admin = env.authenticatedContext("admin").firestore();
+  await setDoc(allowanceRef(admin), allowanceData(20));
+  const database = env.authenticatedContext("member").firestore();
+  const { service } = productionAdapterService("member", database, Array(12).fill(REVISION_B));
+  const saved = await service.saveWorkspace({ workspaceId: ids[0], graph: { ...tinyGraph, project: { name: "Kept after downgrade", type: "Software project" } }, expectedRevision: REVISION_A });
+  await service.setShared({ workspaceId: ids[0], enabled: true });
+  await assertSucceeds(getDoc(chunkRef(database, ids[0], saved.currentRevision, 0)));
+  await service.deleteWorkspace(ids[1]);
+  assert.equal((await getDoc(quotaRef(database, "member"))).data().workspaceIds.length, 29);
+  await assert.rejects(service.createWorkspace({ graph: tinyGraph, workspaceId: "D".repeat(22) }), { code: "workspace-limit" });
+  service.dispose();
+});
+
+test("maximum eight-chunk graph can create with an override within rule document-read budgets", async () => {
+  await seedAdminDirectory(); await seedAccountCount("member", 20);
+  await setDoc(allowanceRef(env.authenticatedContext("admin").firestore()), allowanceData(30));
+  const { service } = productionAdapterService("member", env.authenticatedContext("member").firestore(), Array(12).fill(REVISION_B));
+  const maximum = makeTwoMiBGraph();
+  const encoded = encodeCloudGraph(maximum); assert.equal(encoded.chunkCount, 8);
+  const created = await service.createWorkspace({ graph: maximum, workspaceId: "E".repeat(22) });
+  assert.equal(created.nodeCount, 800); service.dispose();
+});

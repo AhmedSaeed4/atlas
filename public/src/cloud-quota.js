@@ -10,10 +10,11 @@ export function registryWorkspaceIds(data) {
   }
   return [...ids];
 }
-export function addRegistryWorkspace(data, id) {
+export function addRegistryWorkspace(data, id, maximum = MAX_CLOUD_WORKSPACES) {
   const ids = registryWorkspaceIds(data);
   if (ids.includes(id)) throw new CloudQuotaError("This workspace ID is already registered. Retry the original map rather than creating a duplicate.", "workspace-id-collision");
-  if (ids.length >= MAX_CLOUD_WORKSPACES) throw new CloudQuotaError("You have reached the limit of 20 Cloud Workspaces. Delete a Cloud Workspace to make room, or keep this map locally.", "workspace-limit");
+  if (maximum !== null && ![20, 30, 40].includes(maximum)) throw new CloudQuotaError("The workspace allowance could not be verified. Your maps are unchanged.", "quota-invalid");
+  if (maximum !== null && ids.length >= maximum) throw new CloudQuotaError(`You have reached the limit of ${maximum} Cloud Workspaces. Delete a Cloud Workspace to make room, or keep this map locally.`, "workspace-limit");
   return [...ids, id];
 }
 export function removeRegistryWorkspace(data, id) {

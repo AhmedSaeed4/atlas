@@ -18,7 +18,7 @@ export function createActionGate() {
 }
 
 const buttonProgress = new WeakMap();
-export function startButtonProgress(button, label = "Working…") {
+export function startButtonProgress(button, label = "Working…", { delayMs = 0 } = {}) {
   if (!button) return () => {};
   buttonProgress.get(button)?.();
   const compact = button.getBoundingClientRect().width < 86;
@@ -41,13 +41,16 @@ export function startButtonProgress(button, label = "Working…") {
   progress.append(spinner, text);
   button.replaceChildren(content, progress);
   button.classList.add("is-action-pending");
+  if (delayMs > 0) button.classList.add("is-progress-delayed");
+  let progressTimer;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-busy", "true");
   button.disabled = true;
   function finish() {
     if (buttonProgress.get(button) !== finish) return;
     buttonProgress.delete(button);
-    button.classList.remove("is-action-pending");
+    clearTimeout(progressTimer);
+    button.classList.remove("is-action-pending", "is-progress-delayed");
     button.replaceChildren(...original);
     button.disabled = disabled;
     for (const [name, value] of [["aria-label", ariaLabel], ["aria-busy", ariaBusy]]) {
@@ -55,6 +58,11 @@ export function startButtonProgress(button, label = "Working…") {
     }
   }
   buttonProgress.set(button, finish);
+  if (delayMs > 0) {
+    progressTimer = setTimeout(() => {
+      if (buttonProgress.get(button) === finish) button.classList.remove("is-progress-delayed");
+    }, delayMs);
+  }
   return finish;
 }
 

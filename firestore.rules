@@ -210,6 +210,23 @@ service cloud.firestore {
     function quotaPath(uid) {
       return /databases/$(database)/documents/workspaceQuota/$(uid);
     }
+    function adminPath() {
+      return /databases/$(database)/documents/system/adminAccess;
+    }
+    function isAdmin() {
+      return request.auth != null && exists(adminPath())
+        && get(adminPath()).data.adminUid == request.auth.uid;
+    }
+    function limitPath(uid) {
+      return /databases/$(database)/documents/accountLimits/$(uid);
+    }
+    function withinWorkspaceLimit(uid, count) {
+      let path = limitPath(uid);
+      return !exists(path) ? count <= 20
+        : get(path).data.schemaVersion == 1
+          && (get(path).data.maxWorkspaces == null
+            || (get(path).data.maxWorkspaces in [20, 30, 40] && count <= get(path).data.maxWorkspaces));
+    }
     function quotaPolicyEnabled() {
       return get(/databases/$(database)/documents/system/workspaceQuota).data.enabled == true;
     }
@@ -237,7 +254,7 @@ service cloud.firestore {
       let data = request.resource.data;
       let id = data.lastWorkspaceId;
       return data.lastAction == 'create' && data.workspaceIds.size() == oldIds.size() + 1
-        && data.workspaceIds.size() <= 20 && !oldIds.hasAny([id])
+        && withinWorkspaceLimit(uid, data.workspaceIds.size()) && !oldIds.hasAny([id])
         && data.workspaceIds.toSet() == oldIds.toSet().union([id].toSet())
         && !exists(workspacePath(id)) && existsAfter(workspacePath(id))
         && getAfter(workspacePath(id)).data.ownerId == uid;
@@ -252,7 +269,7 @@ service cloud.firestore {
         && get(workspacePath(id)).data.ownerId == uid;
     }
     match /workspaceQuota/{uid} {
-      allow get: if request.auth != null && request.auth.uid == uid;
+      allow get: if request.auth != null && (request.auth.uid == uid || isAdmin());
       allow list, delete: if false;
       allow create: if request.auth != null && request.auth.uid == uid && quotaPolicyEnabled()
         && validQuotaData(request.resource.data) && request.resource.data.createdAt == request.time
@@ -260,6 +277,48 @@ service cloud.firestore {
       allow update: if request.auth != null && request.auth.uid == uid && quotaPolicyEnabled()
         && validQuotaData(request.resource.data) && request.resource.data.createdAt == resource.data.createdAt
         && (quotaAddsWorkspace(uid, resource.data.workspaceIds) || quotaRemovesWorkspace(uid, resource.data.workspaceIds));
+    }
+
+    // Bootstrap identity is immutable from every browser, including the admin.
+    match /system/adminAccess {
+      allow get: if request.auth != null;
+      allow list, write: if false;
+    }
+    match /accountProfiles/{uid} {
+      function validProfile() {
+        let data = request.resource.data;
+        return request.auth != null && request.auth.uid == uid
+          && request.auth.token.email_verified == true
+          && data.keys().hasAll(['schemaVersion', 'uid', 'name', 'email', 'createdAt', 'updatedAt'])
+          && data.keys().hasOnly(['schemaVersion', 'uid', 'name', 'email', 'createdAt', 'updatedAt'])
+          && data.schemaVersion == 1 && data.uid == uid
+          && data.name is string && data.name.size() <= 200 && data.name == request.auth.token.name
+          && data.email is string && data.email.size() > 0 && data.email.size() <= 320
+          && data.email == request.auth.token.email
+          && data.createdAt is timestamp && data.updatedAt == request.time;
+      }
+      allow get: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if validProfile() && request.resource.data.createdAt == request.time;
+      allow update: if validProfile() && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+    match /accountLimits/{uid} {
+      function validLimit() {
+        let data = request.resource.data;
+        return isAdmin()
+          && exists(/databases/$(database)/documents/accountProfiles/$(uid))
+          && data.keys().hasAll(['schemaVersion', 'maxWorkspaces', 'updatedBy', 'updatedAt'])
+          && data.keys().hasOnly(['schemaVersion', 'maxWorkspaces', 'updatedBy', 'updatedAt'])
+          && data.schemaVersion == 1
+          && (data.maxWorkspaces == null || data.maxWorkspaces in [20, 30, 40])
+          && (uid != request.auth.uid || data.maxWorkspaces == null)
+          && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
+      }
+      allow get: if request.auth != null && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if validLimit();
+      allow delete: if isAdmin() && uid != request.auth.uid;
     }
 
     match /workspaces/{workspaceId} {

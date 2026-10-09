@@ -26,6 +26,8 @@ import { initAccountPanel, initSettingsPanel } from "./account-ui.js";
 import { createMapAdmissionController } from "./map-admission.js";
 import { initLocalMapTip } from "./local-map-tip.js";
 import { createActionGate, startButtonProgress } from "./action-feedback.js";
+import { createChoicePicker } from "./choice-picker.js";
+import { createSidebarDrawer } from "./sidebar-drawer.js";
 import { createEditHistory, editHistoryShortcut } from "./edit-history.js";
 import { canImportArchitecture, createCloudImportController } from "./cloud-import.js";
 import { admissionRequiresConfirmation, associationWorkspaceId, findPendingAdmissionAssociation, localProjectForWorkspaceAssociation, workspaceForLocalAssociation, writeOwnerAssociation } from "./cloud-associations.js";
@@ -110,6 +112,12 @@ let onlineWorkspace = null;
 let onlineState = { enabled: false, mode: "local", canEdit: false, canDelete: false, status: "local", routeUnavailable: false };
 const onlineLibraryCache = { snapshot: null, status: "Sign in to load your online map library." };
 let libraryMode = onlineRoute ? "cloud" : "local";
+const librarySelect = byId("workspace-library-select");
+const libraryPicker = createChoicePicker({ value: libraryMode, label: "Workspace library", classPrefix: "workspace-switcher",
+  choices: [{ value: "local", label: "Local Workspace" }, { value: "cloud", label: "Cloud Workspace" }],
+  onChange(value) { librarySelect.value = value; librarySelect.dispatchEvent(new Event("change", { bubbles: true })); }
+});
+librarySelect.before(libraryPicker.element); librarySelect.hidden = true;
 let mapSettingsTarget = null;
 let mapSettingsData = null;
 let mapSettingsReadCancel = null;
@@ -250,6 +258,10 @@ const localMapTip = initLocalMapTip({
     return [...byId("project-list").children].find((row) => row.dataset.workspaceOrigin === "local" && row.dataset.workspaceId === projectId) || null;
   },
 });
+const sidebarDrawer = createSidebarDrawer({
+  sidebar: byId("sidebar"), main: byId("workspace-main"), trigger: byId("mobile-menu"),
+  backdrop: byId("sidebar-backdrop"), closeButton: byId("sidebar-close"), onChange: () => localMapTip.refresh(),
+});
 const emptyGraph = () => ({ schemaVersion: 1, project: { name: "No project selected", description: "", type: "Software project" }, nodes: [], edges: [] });
 const currentGraph = () => activeProject()?.graph || emptyGraph();
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -302,7 +314,7 @@ function showToast(message, kind = "") {
 async function runButtonAction(button, key, label, operation) {
   const ticket = actionGate.begin(key);
   if (!ticket) return;
-  const finish = startButtonProgress(button, label);
+  const finish = startButtonProgress(button, label, { delayMs: key === "clipboard" ? 160 : 0 });
   try { return await operation(); }
   catch (error) { showToast(error?.message || "This action could not be completed. Try again.", "error"); }
   finally {
@@ -1339,7 +1351,7 @@ function makeLibraryRow({ origin, id, ownerUid = "", name, type, count, details,
   nameWrap.append(plain("span", "project-name", name || "Untitled map"));
   nameWrap.append(plain("span", "project-meta", type || details || (origin === "cloud" ? "Cloud Workspace" : "Software project")));
   openButton.append(nameWrap, plain("span", "project-count", String(count ?? "")));
-  openButton.addEventListener("click", (event) => { event.stopPropagation(); open(); });
+  openButton.addEventListener("click", (event) => { event.stopPropagation(); open(); sidebarDrawer.setOpen(false, { restoreFocus: true }); });
   const settingsButton = plain("button", "project-row-settings");
   settingsButton.type = "button";
   settingsButton.dataset.mapSettings = "";
@@ -1424,9 +1436,12 @@ function renderLibrary() {
   if (!list) return;
   const picker = byId("workspace-library-select");
   if (picker && picker.value !== libraryMode) picker.value = libraryMode;
+  libraryPicker.setValue(libraryMode);
+  if (currentWorkspaceActions().hideEditing) libraryPicker.close();
   list.setAttribute("aria-label", libraryMode === "cloud" ? "Cloud Workspace maps" : "Local Workspace maps");
   updateLibraryStatusCopy();
   updateExampleFlowVisibility();
+  byId("clear-data").hidden = libraryMode !== "local" || currentWorkspaceActions().hideEditing;
   if (libraryMode === "cloud") { renderCloudLibrary(); localMapTip.refresh(); return; }
   list.replaceChildren();
   setCloudLibraryState("");
@@ -3017,7 +3032,7 @@ function updateViewerSidebar() {
   sidebar.setAttribute("aria-label", viewer ? "About Atlas" : "Workspace library");
   byId("viewer-sidebar-intro").hidden = !viewer;
   byId("viewer-sidebar-status").hidden = !viewer;
-  byId("mobile-menu").setAttribute("aria-label", viewer ? "Open Atlas sidebar" : "Open projects");
+  sidebarDrawer.updateLabel();
 }
 function updateWorkspaceActionAvailability() {
   updateViewerSidebar();
@@ -3039,7 +3054,7 @@ function updateWorkspaceActionAvailability() {
   byId("new-project").hidden = libraryMode !== "local" || recoveryMode || actions.hideEditing;
   byId("open-import").hidden = actions.hideEditing;
   byId("open-import").disabled = !canImportCurrent();
-  byId("clear-data").hidden = actions.hideEditing;
+  byId("clear-data").hidden = libraryMode !== "local" || actions.hideEditing;
   byId("clear-data").disabled = !canEdit;
   byId("example-flow").disabled = !canEdit;
   updateExampleFlowVisibility();
@@ -4918,21 +4933,19 @@ function attachEvents() {
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".heading-actions")) byId("export-menu").hidden = true;
   });
-  byId("copy-agent-prompt").addEventListener("click", () => runButtonAction(byId("copy-agent-prompt"), "clipboard", "Copying…", () => copyAgentPrompt(true)));
+  byId("copy-agent-prompt").addEventListener("click", (event) => {
+    void runButtonAction(event.currentTarget, "clipboard", "Copying…", () => copyAgentPrompt(true));
+  });
   byId("copy-prompt-text").addEventListener("click", () => runButtonAction(byId("copy-prompt-text"), "clipboard", "Copying…", () => copyAgentPrompt(false)));
   byId("share-graph").addEventListener("click", () => runButtonAction(byId("share-graph"), "share", "Preparing…", openShareDialog));
   byId("copy-share-link").addEventListener("click", () => runButtonAction(byId("copy-share-link"), "clipboard", "Copying…", copyShareLink));
   byId("copy-named-share-link").addEventListener("click", () => runButtonAction(byId("copy-named-share-link"), "clipboard", "Copying…", copyNamedShareLink));
   byId("pause-motion")?.addEventListener("click", toggleMotion);
-  byId("mobile-menu").addEventListener("click", () => {
-    byId("sidebar").classList.toggle("open");
-    localMapTip.refresh();
-  });
   byId("sidebar").addEventListener("transitionend", () => localMapTip.refresh());
   window.matchMedia("(prefers-reduced-motion: reduce)").addEventListener?.("change", updateViewMode);
   document.addEventListener("visibilitychange", updateWorkspaceLoadingUi);
   byId("project-list").addEventListener("click", (event) => {
-    if (event.target.closest(".project-row")) byId("sidebar").classList.remove("open");
+    if (event.target.closest(".project-row")) sidebarDrawer.setOpen(false);
   });
 
   const graphSvg = byId("graph");
@@ -5030,7 +5043,6 @@ function attachEvents() {
       if (dragState?.kind === "connection") cancelActiveConnection();
       const menu = byId("graph-context-menu");
       if (!menu.hidden) { event.preventDefault(); hideGraphContextMenu({ restoreFocus: true }); }
-      byId("sidebar").classList.remove("open");
       byId("export-menu").hidden = true;
     }
   });

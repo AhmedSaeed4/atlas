@@ -32,6 +32,12 @@ test("HTTP clean and legacy routes serve the same app, queries survive redirects
   assert.equal(await clean.text(), await legacy.text());
   const redirected = await fetch(base + "/workspace/?view=a%2Fb", { redirect: "manual" });
   assert.equal(redirected.status, 308); assert.equal(redirected.headers.get("location"), "/workspace?view=a%2Fb");
+  const admin = await fetch(base + "/admin");
+  assert.equal(admin.status, 200); assert.match(await admin.text(), /Account access/);
+  assert.equal((await fetch(base + "/admin.html")).status, 200);
+  const adminRedirect = await fetch(base + "/admin/?next=a%2Fb", { redirect: "manual" });
+  assert.equal(adminRedirect.status, 308); assert.equal(adminRedirect.headers.get("location"), "/admin?next=a%2Fb");
+  assert.equal((await fetch(base + "/admin.css")).status, 200);
   assert.equal((await fetch(base + "/src/routing.js")).status, 200);
   const head = await fetch(base + "/workspace", { method: "HEAD" });
   assert.equal(head.status, 200); assert.equal(await head.text(), "");
