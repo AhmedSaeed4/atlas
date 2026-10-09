@@ -42,18 +42,42 @@ test("touch taps switch the highlighted category and All clears both highlight a
   assert.equal(state.touchInteractionActive, true);
 });
 
-test("mouse hover and category clicks keep the existing desktop highlight and filter behavior", () => {
+test("desktop categories cycle from hover preview to locked highlight, hidden, then restored", () => {
   let state = transition(initial(), { kind: "pointer-over", type: "API", pointerType: "mouse" });
   assert.equal(state.focusedType, "API");
-
   state = transition(state, { kind: "activate-type", type: "API", detail: 1, pointerType: "mouse" });
+  assert.equal(state.lockedType, "API");
   assert.equal(state.focusedType, "API");
-  assert.deepEqual([...state.excludedTypes], ["API"]);
-
-  state = transition(state, { kind: "pointer-out", pointerType: "mouse", relatedType: "Service" });
-  assert.equal(state.focusedType, "Service");
+  assert.deepEqual([...state.excludedTypes], []);
   state = transition(state, { kind: "pointer-out", pointerType: "mouse" });
+  state = transition(state, { kind: "pointer-over", type: "Service", pointerType: "mouse" });
+  state = transition(state, { kind: "focus", type: "", inputType: "keyboard" });
+  assert.equal(state.focusedType, "API");
+  state = transition(state, { kind: "activate-type", type: "API", detail: 1, pointerType: "mouse" });
+  assert.equal(state.lockedType, "");
   assert.equal(state.focusedType, "");
+  assert.deepEqual([...state.excludedTypes], ["API"]);
+  state = transition(state, { kind: "pointer-over", type: "API", pointerType: "mouse" });
+  assert.equal(state.focusedType, "");
+  state = transition(state, { kind: "activate-type", type: "API", detail: 1, pointerType: "mouse" });
+  assert.equal(state.lockedType, "");
+  assert.deepEqual([...state.excludedTypes], []);
+  state = transition(state, { kind: "activate-type", type: "API", detail: 1, pointerType: "mouse" });
+  assert.equal(state.lockedType, "API");
+});
+
+test("another desktop category replaces the lock and All clears locks and hidden categories", () => {
+  let state = transition(initial("", ["Database"]), { kind:"activate-type", type:"API", detail:0, pointerType:"" });
+  state = transition(state, { kind:"focus", type:"Service", inputType:"keyboard" });
+  assert.equal(state.focusedType, "API");
+  state = transition(state, { kind:"activate-type", type:"Service", detail:0, pointerType:"" });
+  assert.equal(state.lockedType, "Service");
+  assert.equal(state.focusedType, "Service");
+  assert.deepEqual([...state.excludedTypes], ["Database"]);
+  state = transition(state, { kind:"activate-all", detail:0, pointerType:"" });
+  assert.equal(state.focusedType, "");
+  assert.equal(state.lockedType, "");
+  assert.deepEqual([...state.excludedTypes], []);
 });
 
 test("hybrid pointer transitions use the current activation and reject stale or keyboard touch state", () => {
@@ -71,7 +95,8 @@ test("hybrid pointer transitions use the current activation and reject stale or 
     pointerType: "mouse",
     pointerDownType: "touch",
   });
-  assert.deepEqual([...state.excludedTypes], ["Service"]);
+  assert.deepEqual([...state.excludedTypes], []);
+  assert.equal(state.lockedType, "Service");
   assert.equal(state.focusedType, "Service");
 
   assert.equal(isTouchClick({ detail: 1, pointerType: "" }, "touch"), true);
@@ -95,4 +120,26 @@ test("touch edge actions stay bound to the edge, project, and graph that was tap
   assert.equal(isCurrentTouchEdgeSelection(selection, "edge-2", "project-1", graph), false);
   assert.equal(isCurrentTouchEdgeSelection(selection, "edge-1", "project-2", graph), false);
   assert.equal(isCurrentTouchEdgeSelection(selection, "edge-1", "project-1", {}), false);
+});
+
+
+test("clearing a locked highlight preserves hidden categories and the next activation locks again", () => {
+  const before = transition(initial("", ["Database"]), { kind: "activate-type", type: "API", detail: 1, pointerType: "mouse" });
+  let state = transition(before, { kind: "clear-highlight" });
+  assert.equal(state.focusedType, "");
+  assert.equal(state.lockedType, "");
+  assert.deepEqual([...state.excludedTypes], ["Database"]);
+  assert.equal(before.lockedType, "API", "the transition does not mutate its input");
+  state = transition(state, { kind: "activate-type", type: "API", detail: 1, pointerType: "mouse" });
+  assert.equal(state.lockedType, "API");
+  assert.deepEqual([...state.excludedTypes], ["Database"]);
+});
+
+test("an empty-map highlight clear also releases touch focus without restoring hidden categories", () => {
+  const before = touchTap("API", "", ["Service"]);
+  const after = transition(before, { kind: "clear-highlight" });
+  assert.equal(after.focusedType, "");
+  assert.equal(after.lockedType, "");
+  assert.equal(after.touchInteractionActive, false);
+  assert.deepEqual([...after.excludedTypes], ["Service"]);
 });

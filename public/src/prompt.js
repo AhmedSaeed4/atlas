@@ -265,7 +265,7 @@ export function buildAgentPrompt(baseUrl, localHost) {
     "    print('Candidate URL file verified.')",
     "else:",
     "    print(link)",
-    "The viewer accepts #map=g.<base64url-gzip> and #map=r.<base64url-utf8>. It decodes and validates the graph locally and never uploads it. With no flags, the helper prints the exact verified URL for backward compatibility and Automatic delivery. --verify-url-file PATH optionally requires a bounded exact URL match before printing verification status. Manual mode never creates or prints a helper or URL.",
+    "The viewer accepts #map=g.<base64url-gzip> and #map=r.<base64url-utf8>. It decodes and validates the graph locally. Atlas may then save the imported map to the viewer account only when that browser is signed in and the user has explicitly enabled automatic saving of future maps; after a successful save Atlas shortens the current browser address. The agent and helper must never authenticate, upload or enable that preference. With no flags, the helper prints the exact verified URL for backward compatibility and Automatic delivery. --verify-url-file PATH optionally requires a bounded exact URL match before printing verification status. Manual mode never creates or prints a helper or URL.",
   ].filter(Boolean);
   return lines.join("\n");
 }

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#171916">
+  <meta name="robots" content="noindex,nofollow">
+  <style>html{color-scheme:dark;background:#171916;color:#f0f2e8}html[data-theme="light"]{color-scheme:light;background:#dedfd7;color:#242721}body{margin:0;background:inherit}</style>
+  <title>Atlas — Account administration</title>
+  <script src="./src/theme.js"></script>
+  <link rel="stylesheet" href="./theme.css">
+  <link rel="stylesheet" href="./admin.css">
+</head>
+<body>
+  <header class="admin-header">
+    <a class="admin-brand" href="./"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Atlas</a>
+    <nav aria-label="Page actions">
+      <a class="button" href="./workspace">Open workspace</a>
+      <button class="button" id="theme-toggle" type="button"><span class="theme-icon" aria-hidden="true"></span><span id="theme-value">Dark</span></button>
+      <button class="button" id="admin-sign-out" type="button" hidden>Sign out</button>
+    </nav>
+  </header>
+  <main>
+    <div class="admin-heading">
+      <div><p class="eyebrow">ADMINISTRATION</p><h1>Account access</h1><p>Manage how many Cloud Workspaces each account can create.</p></div>
+      <button class="button" id="admin-refresh" type="button">Refresh</button>
+    </div>
+    <div class="admin-status" id="admin-status" role="status" aria-live="polite">Checking administrator access…</div>
+    <section class="admin-gate" id="admin-gate" aria-label="Administrator sign-in">
+      <div class="gate-mark" aria-hidden="true">A</div><h2 id="gate-heading">Checking your account</h2>
+      <p id="gate-description">Restoring your account and checking access.</p>
+      <button class="button primary" id="admin-sign-in" type="button" hidden>Sign in with Google</button>
+    </section>
+    <section class="admin-directory" id="admin-directory" aria-label="Accounts" hidden>
+      <div class="directory-toolbar"><label for="admin-search">Find an account<input id="admin-search" type="search" placeholder="Search name or email" autocomplete="off"></label><span id="admin-count"></span></div>
+      <div class="table-scroll"><table><thead><tr><th scope="col">Account</th><th scope="col">Workspaces</th><th scope="col">Allowance</th><th scope="col">Actions</th></tr></thead><tbody id="admin-accounts"></tbody></table></div>
+      <p id="admin-empty" class="empty" hidden>No accounts match your search.</p>
+      <div class="directory-foot"><p>Choose 20 to revoke extra access. Existing workspaces are kept.</p><button class="button" id="admin-more" type="button" hidden>Load more</button></div>
+    </section>
+    <footer id="admin-identity"></footer>
+  </main>
+  <script type="module" src="./src/admin-page.js"></script>
+</body>
+</html>

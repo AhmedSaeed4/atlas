@@ -18,13 +18,20 @@ const server = http.createServer(async (request, response) => {
     return;
   }
   let pathname;
+  let requestUrl;
   try {
-    pathname = decodeURIComponent(new URL(request.url || "/", "http://127.0.0.1").pathname);
+    requestUrl = new URL(request.url || "/", "http://127.0.0.1");
+    pathname = decodeURIComponent(requestUrl.pathname);
   } catch {
     response.writeHead(400).end("Bad request");
     return;
   }
-  const relative = path.normalize(pathname.replace(/^[/\\]+/, ""));
+  if (pathname === "/workspace/" || pathname === "/admin/") {
+    response.writeHead(308, { Location: pathname.slice(0, -1) + requestUrl.search }).end();
+    return;
+  }
+  const pagePath = ["/workspace", "/admin"].includes(pathname) ? pathname + ".html" : pathname;
+  const relative = path.normalize(pagePath.replace(/^[/\\]+/, ""));
   let target = path.resolve(publicRoot, relative || "index.html");
   if (target !== publicRoot && !target.startsWith(publicRoot + path.sep)) {
     response.writeHead(403).end("Forbidden");
@@ -44,7 +51,7 @@ const server = http.createServer(async (request, response) => {
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
-      "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://atlas-ahmedsaeed4-2026.firebaseapp.com; frame-src https://atlas-ahmedsaeed4-2026.firebaseapp.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     });
     if (body) response.end(body);
     else response.end();
@@ -54,5 +61,5 @@ const server = http.createServer(async (request, response) => {
 });
 const port = Number(process.env.PORT || 4173);
 server.listen(port, "127.0.0.1", () => {
-  process.stdout.write("Project Atlas ready at http://127.0.0.1:" + port + "\n");
+  process.stdout.write("Project Atlas ready at http://127.0.0.1:" + server.address().port + "\n");
 });

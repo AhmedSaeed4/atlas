@@ -15,14 +15,14 @@ test("legacy root map fragments redirect to the workspace with query and fragmen
       search: "?campaign=legacy&next=a%2Fb",
       hash: "#map=g.ABC_123",
     }),
-    "./workspace.html?campaign=legacy&next=a%2Fb#map=g.ABC_123",
+    "./workspace?campaign=legacy&next=a%2Fb#map=g.ABC_123",
   );
 });
 
 test("legacy raw-fragment links and direct index entries keep their exact payload", () => {
   assert.equal(
     getLegacyShareRedirect({ pathname: "/index.html", search: "?view=old", hash: "#map=r.eyJuYW1lIjoiQ2Fm6SJ9" }),
-    "./workspace.html?view=old#map=r.eyJuYW1lIjoiQ2Fm6SJ9",
+    "./workspace?view=old#map=r.eyJuYW1lIjoiQ2Fm6SJ9",
   );
 });
 
@@ -33,37 +33,37 @@ test("ordinary root queries and non-root paths do not masquerade as shared maps"
   assert.equal(getLegacyShareRedirect({ pathname: "/", hash: "#MAP=g.payload" }), null);
 });
 
-test("the prompt viewer URL points at workspace.html and excludes the landing query and fragment", () => {
+test("the prompt viewer URL points at workspace and excludes the landing query and fragment", () => {
   assert.equal(
     getWorkspaceBaseUrl("https://atlas.example/atlas/index.html?campaign=old#map=g.old"),
-    "https://atlas.example/atlas/workspace.html",
+    "https://atlas.example/atlas/workspace",
   );
   assert.equal(
     getWorkspaceBaseUrl("http://127.0.0.1:4173/?example=flow"),
-    "http://127.0.0.1:4173/workspace.html",
+    "http://127.0.0.1:4173/workspace",
   );
 });
 
 test("prompt generation uses the viewer URL and warns for local development", () => {
   const publicPrompt = buildAgentPrompt(getWorkspaceBaseUrl("https://atlas.example/"), false);
-  assert.match(publicPrompt, /https:\/\/atlas\.example\/workspace\.html/);
+  assert.match(publicPrompt, /https:\/\/atlas\.example\/workspace/);
   assert.match(publicPrompt, /dedicated Atlas output folder/);
   assert.match(publicPrompt, /Manual: inspect the repository read-only and create exactly one new timestamped JSON/);
   assert.match(publicPrompt, /Automatic: create a new timestamped JSON and versioned helper/);
   assert.doesNotMatch(publicPrompt, /LOCAL DEVELOPMENT WARNING/);
 
   const localPrompt = buildAgentPrompt(getWorkspaceBaseUrl("http://127.0.0.1:4173/?example=flow"), true);
-  assert.match(localPrompt, /http:\/\/127\.0\.0\.1:4173\/workspace\.html/);
+  assert.match(localPrompt, /http:\/\/127\.0\.0\.1:4173\/workspace/);
   assert.match(localPrompt, /LOCAL DEVELOPMENT WARNING/);
 });
 
 test("local viewer detection distinguishes development hosts and non-web origins", () => {
-  assert.equal(isLocalViewerUrl("http://localhost:4173/workspace.html"), true);
-  assert.equal(isLocalViewerUrl("https://dev.localhost/workspace.html"), true);
-  assert.equal(isLocalViewerUrl("http://127.0.0.1:4173/workspace.html"), true);
-  assert.equal(isLocalViewerUrl("http://[::1]:4173/workspace.html"), true);
+  assert.equal(isLocalViewerUrl("http://localhost:4173/workspace"), true);
+  assert.equal(isLocalViewerUrl("https://dev.localhost/workspace"), true);
+  assert.equal(isLocalViewerUrl("http://127.0.0.1:4173/workspace"), true);
+  assert.equal(isLocalViewerUrl("http://[::1]:4173/workspace"), true);
   assert.equal(isLocalViewerUrl("file:///D:/atlas/index.html"), true);
-  assert.equal(isLocalViewerUrl("https://atlas.example/workspace.html"), false);
+  assert.equal(isLocalViewerUrl("https://atlas.example/workspace"), false);
 });
 
 test("preview labels stay plain text values for safe textContent rendering", () => {

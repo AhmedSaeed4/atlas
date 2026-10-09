@@ -1,6 +1,9 @@
+import { workspaceBaseUrl } from "./routing.js";
 import { buildAgentPrompt } from "./prompt.js";
+import { getSharedAccountSession } from "./account-session.js";
+import { initAccountPanel } from "./account-ui.js";
 
-export function getLegacyShareRedirect(locationLike, workspacePath = "./workspace.html") {
+export function getLegacyShareRedirect(locationLike, workspacePath = "./workspace") {
   const pathname = String(locationLike?.pathname || "/");
   const isLandingEntry = pathname === "/" || pathname.endsWith("/index.html");
   const hash = String(locationLike?.hash || "");
@@ -9,11 +12,7 @@ export function getLegacyShareRedirect(locationLike, workspacePath = "./workspac
 }
 
 export function getWorkspaceBaseUrl(inputUrl) {
-  const source = new URL(String(inputUrl));
-  const viewer = new URL("./workspace.html", source.href);
-  viewer.search = "";
-  viewer.hash = "";
-  return viewer.href;
+  return workspaceBaseUrl(inputUrl);
 }
 
 export function isLocalViewerUrl(inputUrl) {
@@ -182,6 +181,8 @@ function initializeLanding() {
   }
   bindPreview();
   bindPromptCopy();
+  const account = getSharedAccountSession();
+  initAccountPanel({ root: document, account });
 }
 
 if (typeof window !== "undefined" && typeof document !== "undefined") initializeLanding();

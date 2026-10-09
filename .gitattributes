@@ -6,3 +6,5 @@
 *.md text eol=lf
 .gitignore text eol=lf
 .gitattributes text eol=lf
+# Intentional spaces in template literals emitted from the pinned Firebase SDK.
+public/src/cloud-service.bundle.js whitespace=-blank-at-eol

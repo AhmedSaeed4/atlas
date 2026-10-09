@@ -10,6 +10,8 @@
   function applyTheme() {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+    const schemeMeta = document.querySelector('meta[name="color-scheme"]');
+    if (schemeMeta) schemeMeta.content = theme;
     const colorMeta = document.querySelector('meta[name="theme-color"]');
     if (colorMeta) colorMeta.content = theme === "light" ? "#dedfd7" : "#171916";
     const toggle = document.getElementById("theme-toggle");
