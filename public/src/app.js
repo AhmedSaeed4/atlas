@@ -219,7 +219,8 @@ const writeWorkspaceAssociation = (projectId, workspaceId, ownerUid = effectiveA
   if (!writeOwnerAssociation(cloudAssociations, projectId, workspaceId, ownerUid, details)) return;
   saveCloudAssociations();
 };
-const removeWorkspaceAssociation = (workspaceId) => {
+const removeWorkspaceAssociation = (workspaceId, ownerUid = effectiveAccountUid()) => {
+  mapAdmissionController.forget({ workspaceId, ownerUid });
   for (const [projectId, record] of Object.entries(cloudAssociations)) {
     if (associationWorkspaceId(record) === workspaceId) delete cloudAssociations[projectId];
   }
@@ -1833,6 +1834,7 @@ function confirmDeleteLocalTarget(target) {
       cancelPendingShareLoad();
     }
     editHistory.forget("local:" + current.id);
+    mapAdmissionController.forget({ projectId: current.id });
     delete cloudAssociations[current.id];
     saveCloudAssociations();
     projects = deletion.projects;
@@ -3506,6 +3508,7 @@ function confirmProjectDelete() {
       cancelPendingShareLoad();
     }
     editHistory.forget("local:" + context.projectId);
+    mapAdmissionController.forget({ projectId: context.projectId });
     delete cloudAssociations[context.projectId];
     saveCloudAssociations();
     projects = deletion.projects;
@@ -4329,6 +4332,7 @@ function requestClearData() {
     recoveryText = "";
     lastStorageError = "";
     editHistory.clear("local:");
+    for (const project of projects) mapAdmissionController.forget({ projectId: project.id });
     projects = [];
     cloudAssociations = {};
     saveCloudAssociations();

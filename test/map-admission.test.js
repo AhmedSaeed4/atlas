@@ -222,3 +222,74 @@ test("a quota rejection preserves each new map and can retry after space is avai
     assert.equal(ids.length,20);
   }
 });
+
+
+test("reimporting the same fragment after cloud/local deletion creates a fresh cloud workspace", async () => {
+  const account = makeAccount();
+  const live = new Map();
+  const controller = makeController(account, async ({ candidateWorkspaceId, ownerUid }) => {
+    const workspace = { id: candidateWorkspaceId, ownerId: ownerUid };
+    live.set(workspace.id, workspace);
+    return workspace;
+  });
+  const first = { source: "fragment", key: "same-agent-map", projectId: "same-local-hash", graph: graph(), expectedOwnerUid: "owner-a", candidateWorkspaceId: "A".repeat(22), idempotencyKey: "fragment:first" };
+  const original = await controller.admit(first);
+  live.delete(original.workspace.id);
+  const recreated = await controller.admit({ ...first, candidateWorkspaceId: "B".repeat(22), idempotencyKey: "fragment:reimport" });
+  assert.equal(recreated.status, "saved");
+  assert.equal(recreated.workspace.id, "B".repeat(22));
+  assert.equal(live.has(recreated.workspace.id), true);
+});
+
+
+test("confirmed cloud deletion forgets only the matching owner's cached result", async () => {
+  const account = makeAccount();
+  let creates = 0;
+  const controller = makeController(account, async ({ candidateWorkspaceId, ownerUid }) => {
+    creates += 1;
+    return { id: candidateWorkspaceId, ownerId: ownerUid };
+  });
+  const admission = { source: "fragment", key: "owned-map", projectId: "local-map", graph: graph(), candidateWorkspaceId: "A".repeat(22), expectedOwnerUid: "owner-a" };
+  await controller.admit(admission);
+  assert.equal(controller.forget({ workspaceId: admission.candidateWorkspaceId }), 0);
+  assert.equal(controller.forget({ workspaceId: admission.candidateWorkspaceId, ownerUid: "owner-b" }), 0);
+  await controller.admit(admission);
+  assert.equal(creates, 1);
+  assert.equal(controller.forget({ workspaceId: admission.candidateWorkspaceId, ownerUid: "owner-a" }), 1);
+  assert.equal(controller.getResult(admission), null);
+  const recreated = await controller.admit(admission);
+  assert.equal(recreated.status, "saved");
+  assert.equal(creates, 2);
+});
+
+test("deleting a local map cancels an admission still waiting for session restoration", async () => {
+  const account = makeAccount({ initialized: false });
+  let creates = 0;
+  const controller = makeController(account, async () => { creates += 1; return {}; });
+  const admission = { source: "fragment", key: "deleted-local", projectId: "local-hash", graph: graph() };
+  const pending = controller.admit(admission);
+  await Promise.resolve();
+  assert.equal(controller.forget({ projectId: admission.projectId }), 1);
+  account.resolveInitialization();
+  assert.equal((await pending).status, "stale");
+  assert.equal(creates, 0);
+  assert.equal(controller.getResult(admission), null);
+  assert.equal(controller.pendingCount(), 0);
+});
+
+test("a fresh import supersedes queued work for the old candidate without creating both", async () => {
+  const account = makeAccount({ initialized: false });
+  const ids = [];
+  const controller = makeController(account, async ({ candidateWorkspaceId }) => {
+    ids.push(candidateWorkspaceId);
+    return { id: candidateWorkspaceId };
+  });
+  const admission = { source: "fragment", key: "same-content", projectId: "same-local-id", graph: graph(), expectedOwnerUid: "owner-a" };
+  const old = controller.admit({ ...admission, candidateWorkspaceId: "A".repeat(22) });
+  await Promise.resolve();
+  const fresh = controller.admit({ ...admission, candidateWorkspaceId: "B".repeat(22) });
+  account.resolveInitialization();
+  assert.equal((await old).status, "stale");
+  assert.equal((await fresh).workspace.id, "B".repeat(22));
+  assert.deepEqual(ids, ["B".repeat(22)]);
+});

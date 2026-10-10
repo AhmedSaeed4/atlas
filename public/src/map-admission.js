@@ -32,6 +32,7 @@ export function createMapAdmissionController({ account, createWorkspace } = {}) 
     const run = queue.then(async () => {
       const finish = (result) => ({ ...result, id: admissionId, source: record.source, projectId: record.projectId, key: record.key });
       const isCurrent = () => {
+        if (record.cancelled) return false;
         try { return record.isCurrent() !== false; } catch { return false; }
       };
       const preferenceEnabled = () => autosaveIsEnabled(account);
@@ -106,7 +107,15 @@ export function createMapAdmissionController({ account, createWorkspace } = {}) 
     const admission = { source, key: String(key || projectId), projectId: String(projectId || ""), graph: clone(graph), isCurrent, getGraph, candidateWorkspaceId: String(candidateWorkspaceId || ""), idempotencyKey: String(idempotencyKey || ""), expectedOwnerUid: String(expectedOwnerUid || ""), prepareCreate };
     if (!admission.key) return Promise.resolve({ status: "ignored", reason: "missing-key" });
     const id = recordKey(admission);
-    const existing = records.get(id);
+    const previous = records.get(id);
+    // A fragment key identifies content, not a lifetime cloud workspace. A new
+    // local project/candidate is a fresh import, even when that content is equal.
+    const sameIntent = previous && previous.projectId === admission.projectId
+      && previous.candidateWorkspaceId === admission.candidateWorkspaceId
+      && previous.idempotencyKey === admission.idempotencyKey
+      && previous.expectedOwnerUid === admission.expectedOwnerUid;
+    if (previous && !sameIntent) previous.cancelled = true;
+    const existing = sameIntent ? previous : null;
     if (existing?.promise) return existing.promise;
     if (existing?.result) return Promise.resolve(existing.result);
     const record = existing || {
@@ -156,7 +165,26 @@ export function createMapAdmissionController({ account, createWorkspace } = {}) 
     return record?.result || null;
   }
 
-  return Object.freeze({ admit, retry, getResult, pendingCount: () => [...records.values()].filter((record) => record.promise).length });
+  function forget({ projectId = "", workspaceId = "", ownerUid = "" } = {}) {
+    const project = String(projectId || "");
+    const workspace = String(workspaceId || "");
+    const owner = String(ownerUid || "");
+    if (!project && (!workspace || !owner)) return 0;
+    let removed = 0;
+    for (const [key, record] of records) {
+      const matchesProject = project && record.projectId === project;
+      const recordedOwner = String(record.result?.ownerUid || record.expectedOwnerUid || "");
+      const matchesWorkspace = workspace && owner && recordedOwner === owner
+        && (record.result?.workspace?.id === workspace || record.candidateWorkspaceId === workspace);
+      if (!matchesProject && !matchesWorkspace) continue;
+      record.cancelled = true;
+      records.delete(key);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  return Object.freeze({ admit, retry, getResult, forget, pendingCount: () => [...records.values()].filter((record) => record.promise).length });
 }
 
 export const mapAdmissionSources = Object.freeze(["new", "import", "fragment"]);

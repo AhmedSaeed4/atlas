@@ -26,6 +26,9 @@ import {
 
 import { createCloudService, createFirebaseAdapter } from "../public/src/cloud-service.js";
 import { encodeCloudGraph } from "../public/src/cloud-model.js";
+import { createMapAdmissionController } from "../public/src/map-admission.js";
+import { commitManualMoveAssociation, hasUnresolvedLocalCloudCandidate, reusableManualMoveAttempt } from "../public/src/sidebar-library.js";
+import { workspaceForLocalAssociation } from "../public/src/cloud-associations.js";
 
 const PROJECT_ID = "demo-atlas-cloud-rules";
 const WORKSPACE_ID = "A".repeat(22);
@@ -939,4 +942,83 @@ test("maximum eight-chunk graph can create with an override within rule document
   const encoded = encodeCloudGraph(maximum); assert.equal(encoded.chunkCount, 8);
   const created = await service.createWorkspace({ graph: maximum, workspaceId: "E".repeat(22) });
   assert.equal(created.nodeCount, 800); service.dispose();
+});
+
+
+async function watchReadyGraph(service, workspaceId) {
+  return new Promise((resolve, reject) => {
+    let unsubscribe;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      reject(new Error("Timed out reading the recreated workspace"));
+    }, 15000);
+    unsubscribe = service.watchWorkspace({ workspaceId }, snapshot => {
+      if (snapshot.status === "ready" || snapshot.status === "error") {
+        clearTimeout(timeout);
+        unsubscribe?.();
+        if (snapshot.status === "ready") resolve(snapshot);
+        else reject(snapshot.error || new Error("Recreated workspace could not be read"));
+      }
+    });
+  });
+}
+
+const recreatedAgentGraph = () => ({
+  project: { name: "Reopened agent map", type: "Backend", description: "Disposable deletion regression" },
+  nodes: [{ id: "api", label: "API", type: "API" }, { id: "database", label: "Database", type: "Database" }],
+  edges: [{ id: "stores", source: "api", target: "database", label: "stores" }],
+});
+
+test("the same owner can move an agent map again after deleting its earlier cloud and local copies", async () => {
+  const uid = "manual-reimport-owner";
+  const database = env.authenticatedContext(uid).firestore();
+  const { service } = productionAdapterService(uid, database, [REVISION_A, REVISION_B]);
+  try {
+    const graph = recreatedAgentGraph();
+    const projectId = "same-agent-fragment-hash";
+    const associations = {};
+    // Reopening the agent link recreates the same local content ID. Local-only
+    // admission reserves an ID but never submits it; a manual move is allowed.
+    const move = async candidate => {
+      associations[projectId] = { workspaceId: "Z".repeat(22), ownerUid: uid, source: "fragment", pending: true, committed: false, admissionStatus: "local", confirmationRequired: true };
+      assert.equal(hasUnresolvedLocalCloudCandidate(associations[projectId], workspaceForLocalAssociation(associations[projectId], uid)), false);
+      assert.equal(reusableManualMoveAttempt(associations[projectId], uid), null);
+      associations[projectId] = { workspaceId: candidate, ownerUid: uid, source: "manual", pending: true, committed: false, graphFingerprint: JSON.stringify(graph), idempotencyKey: "manual:" + candidate };
+      await service.createWorkspace({ graph, workspaceId: candidate, expectedOwnerUid: uid });
+      assert.equal(commitManualMoveAssociation(associations, projectId, () => true), true);
+      assert.equal(workspaceForLocalAssociation(associations[projectId], uid), candidate);
+      const ready = await watchReadyGraph(service, candidate);
+      assert.equal(encodeCloudGraph(ready.graph).json, encodeCloudGraph(graph).json);
+    };
+    await move("A".repeat(22));
+    await service.deleteWorkspace("A".repeat(22));
+    delete associations[projectId]; // Confirmed cloud/local deletion clears the receipt.
+    assert.equal((await readStoredWorkspace("A".repeat(22))).exists(), false);
+    assert.deepEqual((await getDoc(quotaRef(database, uid))).data().workspaceIds, []);
+    await move("B".repeat(22));
+    assert.deepEqual((await service.listWorkspaces()).workspaces.map(item => item.id), ["B".repeat(22)]);
+    assert.deepEqual((await getDoc(quotaRef(database, uid))).data().workspaceIds, ["B".repeat(22)]);
+  } finally { service.dispose(); }
+});
+
+test("reopening identical agent content retires deleted admission results and reads the new cloud graph", async () => {
+  const uid = "admission-reimport-owner";
+  const database = env.authenticatedContext(uid).firestore();
+  const { service } = productionAdapterService(uid, database, [REVISION_A, REVISION_B]);
+  try {
+    const account = { getState: () => ({ initialized: true, user: { uid } }), getPreferenceState: () => ({ saveFutureMaps: true }), getService: async () => service };
+    const controller = createMapAdmissionController({ account, createWorkspace: input => input.service.createWorkspace({ graph: input.graph, workspaceId: input.candidateWorkspaceId, expectedOwnerUid: input.ownerUid }) });
+    const admission = { source: "fragment", key: "same-agent-content", projectId: "same-local-hash", graph: recreatedAgentGraph(), expectedOwnerUid: uid };
+    const original = await controller.admit({ ...admission, candidateWorkspaceId: "A".repeat(22) });
+    assert.equal(original.status, "saved");
+    await service.deleteWorkspace(original.workspace.id);
+    assert.equal(controller.forget({ workspaceId: original.workspace.id, ownerUid: uid }), 1);
+    assert.equal(controller.forget({ projectId: admission.projectId }), 0);
+    const recreated = await controller.admit({ ...admission, candidateWorkspaceId: "B".repeat(22) });
+    assert.equal(recreated.status, "saved");
+    assert.equal(recreated.workspace.id, "B".repeat(22));
+    const ready = await watchReadyGraph(service, recreated.workspace.id);
+    assert.equal(encodeCloudGraph(ready.graph).json, encodeCloudGraph(admission.graph).json);
+    assert.deepEqual((await service.listWorkspaces()).workspaces.map(item => item.id), [recreated.workspace.id]);
+  } finally { service.dispose(); }
 });
