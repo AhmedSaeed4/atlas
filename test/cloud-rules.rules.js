@@ -29,6 +29,7 @@ import { encodeCloudGraph } from "../public/src/cloud-model.js";
 import { createMapAdmissionController } from "../public/src/map-admission.js";
 import { commitManualMoveAssociation, hasUnresolvedLocalCloudCandidate, reusableManualMoveAttempt } from "../public/src/sidebar-library.js";
 import { workspaceForLocalAssociation } from "../public/src/cloud-associations.js";
+import { verifyCloudAssociation } from "../public/src/cloud-reference-recovery.js";
 
 const PROJECT_ID = "demo-atlas-cloud-rules";
 const WORKSPACE_ID = "A".repeat(22);
@@ -1020,5 +1021,35 @@ test("reopening identical agent content retires deleted admission results and re
     const ready = await watchReadyGraph(service, recreated.workspace.id);
     assert.equal(encodeCloudGraph(ready.graph).json, encodeCloudGraph(admission.graph).json);
     assert.deepEqual((await service.listWorkspaces()).workspaces.map(item => item.id), [recreated.workspace.id]);
+  } finally { service.dispose(); }
+});
+
+
+test("a persisted pre-fix receipt for a deleted cloud copy recovers without deleting or reimporting the local graph", async () => {
+  const uid = "old-receipt-owner";
+  const database = env.authenticatedContext(uid).firestore();
+  const { service } = productionAdapterService(uid, database, [REVISION_A, REVISION_B]);
+  try {
+    const localGraph = recreatedAgentGraph();
+    const original = JSON.stringify(localGraph);
+    const first = await service.createWorkspace({ graph: localGraph, workspaceId: "A".repeat(22), expectedOwnerUid: uid });
+    // Deletion in another browser leaves this browser's old receipt on disk.
+    const associations = JSON.parse(JSON.stringify({ local: { workspaceId: first.id, ownerUid: uid, source: "manual", pending: false, committed: true } }));
+    await service.deleteWorkspace(first.id);
+    assert.equal(workspaceForLocalAssociation(associations.local, uid), first.id);
+    let persisted;
+    const recovered = await verifyCloudAssociation({
+      associations, projectId: "local", workspaceId: first.id, ownerUid: uid,
+      getCurrentOwnerUid: () => uid, listWorkspaces: () => service.listWorkspaces(),
+      saveAssociations: () => { persisted = JSON.stringify(associations); return true; },
+    });
+    assert.equal(recovered.status, "missing");
+    assert.equal(persisted, "{}");
+    assert.equal(JSON.stringify(localGraph), original);
+    assert.deepEqual((await service.listWorkspaces()).workspaces, []);
+    const fresh = await service.createWorkspace({ graph: localGraph, workspaceId: "B".repeat(22), expectedOwnerUid: uid });
+    const ready = await watchReadyGraph(service, fresh.id);
+    assert.equal(encodeCloudGraph(ready.graph).json, encodeCloudGraph(localGraph).json);
+    assert.deepEqual((await getDoc(quotaRef(database, uid))).data().workspaceIds, [fresh.id]);
   } finally { service.dispose(); }
 });

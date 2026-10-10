@@ -108,7 +108,13 @@ test("local-to-cloud move is explicit and keeps its retry candidate tied to the 
   assert.ok(flow.includes("mapSettingsController.isCurrent(target)"));
   assert.doesNotMatch(flow, /activeProject\(\)|onlineController\.saveOnline/);
   assert.ok(app.includes('addMapSettingsAction("Open Cloud Workspace"'));
-  assert.ok(app.includes("void openOwnedOnlineWorkspace({ id: linkedId, ownerId: uid })"));
+  const linkedStart = app.indexOf('} else if (linkedId && !linkedId.startsWith("pending:")) {');
+  const linkedFlow = app.slice(linkedStart, app.indexOf('} else {', linkedStart));
+  assert.ok(linkedStart >= 0);
+  assert.ok(linkedFlow.includes('checkLocalCloudReference(current.id, linkedId,'));
+  assert.ok(linkedFlow.includes('() => mapSettingsController.isCurrent(current)'));
+  assert.match(linkedFlow, /result.status === "present"[\s\S]*?openOwnedOnlineWorkspace\(result.workspace\)/);
+  assert.doesNotMatch(linkedFlow, /openOwnedOnlineWorkspace\(\{ id: linkedId/);
   assert.ok(app.includes("const unresolvedCandidate = hasUnresolvedLocalCloudCandidate("));
   assert.ok(app.includes("manualMoveAttempts.isActive(target.id)"));
   assert.ok(app.includes("Open local map to retry save"));
