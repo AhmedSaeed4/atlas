@@ -22,6 +22,8 @@ npm test
 
 The tests cover import schema and limits, Foglamp-compatible aliases, cycle and empty graph layout, backward edges and loops, categorized and legacy charts, optional detail/junction compatibility, safe SVG escaping, PNG size caps, share-link encoding/decoding and decompression limits, named-link clipboard contracts, prompt mode/location gating, generated-v1 helper bounds, exact helper stdout round-tripping, candidate URL verification and tamper rejection, cross-working-directory behavior, touch-specific category highlighting, persistent invalid-share recovery, empty-library/clear-data flows, inspector preferences, and browser storage errors/recovery.
 
+The component category row stays on one line and hides its scrollbar. Hover over the row and use the mouse wheel to browse left/right; trackpad horizontal scrolling and Shift+wheel stay native. When the row cannot scroll farther, normal page scrolling resumes. Check with `node --test test/filter-interaction.test.js`, then import a map with enough types to overflow and scroll both directions at desktop/tablet widths.
+
 ## Build a map
 
 Choose **Copy agent prompt** on the landing page or in the workspace and paste it into a coding agent that is already working in the target repository. Unless your instructions already name both a delivery mode and output folder, the prompt asks for those choices before repository inspection or file creation. It recommends an explicit dedicated folder outside the source repository and resolves relative paths only against a base you named. Both modes inspect the repository read-only, ground claims in evidence, avoid secret values, and keep generated files in the agreed folder.

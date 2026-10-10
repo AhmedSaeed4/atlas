@@ -380,7 +380,7 @@ select { color: var(--atlas-foreground); }
   .toolbar .toolbar-divider,
   .toolbar .toolbar-spacer { display: none; }
   .toolbar .toolbar-button { order: 1; }
-  .toolbar .filter-group { order: 2; flex: 0 0 100%; flex-wrap: wrap; overflow: visible; }
+  .toolbar .filter-group { order: 2; flex: 0 0 100%; flex-wrap: nowrap; }
 }
 .timeline-node-heading { display: flex; align-items: center; justify-content: space-between; width: 100%; }
 .timeline-node-icon { display: grid; flex: 0 0 22px; place-items: center; width: 22px; height: 22px; border: 1px solid var(--atlas-border); border-radius: 50%; color: var(--atlas-muted); background: var(--atlas-graph-canvas); }
