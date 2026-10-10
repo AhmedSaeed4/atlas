@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isCurrentTouchEdgeSelection, isTouchClick, transitionTypeInteractions } from "../public/src/filter-interaction.js";
+import { isCurrentTouchEdgeSelection, isTouchClick, scrollTypeFiltersWithWheel, transitionTypeInteractions } from "../public/src/filter-interaction.js";
 
 const initial = (focusedType = "", excludedTypes = []) => ({
   focusedType,
@@ -142,4 +142,52 @@ test("an empty-map highlight clear also releases touch focus without restoring h
   assert.equal(after.lockedType, "");
   assert.equal(after.touchInteractionActive, false);
   assert.deepEqual([...after.excludedTypes], ["Service"]);
+});
+
+function wheelFixture(options = {}, geometry = {}) {
+  const group = { scrollLeft: 0, clientWidth: 250, scrollWidth: 850, ...geometry };
+  const event = { deltaX: 0, deltaY: 100, deltaMode: 0, cancelable: true,
+    preventDefault() { this.defaultPrevented = true; }, ...options };
+  return { group, event, scroll: () => scrollTypeFiltersWithWheel(group, event) };
+}
+
+test("vertical mouse wheel reveals categories in both directions without page scrolling", () => {
+  const down = wheelFixture();
+  assert.equal(down.scroll(), true); assert.equal(down.group.scrollLeft, 100);
+  assert.equal(down.event.defaultPrevented, true);
+  const up = wheelFixture({ deltaY: -80 }, { scrollLeft: 100 });
+  assert.equal(up.scroll(), true); assert.equal(up.group.scrollLeft, 20);
+  assert.equal(up.event.defaultPrevented, true);
+});
+
+test("line and page mouse wheels use the strip's horizontal scale", () => {
+  for (const [deltaMode, deltaY, expected] of [[0, 32, 32], [1, 2, 32], [2, 1, 250]]) {
+    const f = wheelFixture({ deltaMode, deltaY });
+    assert.equal(f.scroll(), true); assert.equal(f.group.scrollLeft, expected);
+  }
+});
+
+test("scrolling clamps to either end and releases the wheel to the page once at the boundary", () => {
+  const right = wheelFixture({ deltaY: 200 }, { scrollLeft: 560 });
+  assert.equal(right.scroll(), true); assert.equal(right.group.scrollLeft, 600);
+  const atRight = wheelFixture({}, { scrollLeft: 600 });
+  assert.equal(atRight.scroll(), false); assert.equal(atRight.event.defaultPrevented, undefined);
+  const left = wheelFixture({ deltaY: -200 }, { scrollLeft: 40 });
+  assert.equal(left.scroll(), true); assert.equal(left.group.scrollLeft, 0);
+  const atLeft = wheelFixture({ deltaY: -100 });
+  assert.equal(atLeft.scroll(), false); assert.equal(atLeft.event.defaultPrevented, undefined);
+});
+
+test("zoom, native horizontal gestures, nonoverflowing rows and handled wheel events remain native", () => {
+  for (const options of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true },
+    { deltaX: 120 }, { deltaY: 0 }, { deltaY: NaN }, { cancelable: false }, { defaultPrevented: true }]) {
+    const f = wheelFixture(options);
+    assert.equal(f.scroll(), false); assert.equal(f.group.scrollLeft, 0);
+    assert.equal(f.event.defaultPrevented, options.defaultPrevented);
+  }
+  for (const geometry of [{ scrollWidth: 250 }, { scrollWidth: 150 }, { clientWidth: 0 }]) {
+    const f = wheelFixture({}, geometry);
+    assert.equal(f.scroll(), false); assert.equal(f.group.scrollLeft, 0);
+    assert.equal(f.event.defaultPrevented, undefined);
+  }
 });

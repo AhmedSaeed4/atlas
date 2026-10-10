@@ -16,7 +16,7 @@ import { createShareUrl, decodeShareHash, findSharedProject, isLocalShareHost, s
 import { addOrReuseExampleProject, clearLocalDataRoute, clearRejectedShareRoute, consumeFlowExampleQuery, createRevisionGate, createShareLoadTracker, fitScaleForBounds, isFlowExampleRoute, shareFailureContext, readImportSource, removeProjectSnapshot, shouldSaveOnEnter } from "./controller-utils.js";
 import { INSPECTOR_DEFAULT_WIDTH, clampInspectorWidth, inspectorWidthLimits, isNamedLinkSnapshotCurrent, namedLinkPayload, readInspectorExpanded, readInspectorWidthPreference, writeInspectorExpanded, writeInspectorWidth, writeNamedLinkClipboard } from "./refinement-ui.js";
 import { branchEdgeCandidate, canStartPointerGesture, connectionPreviewPath, nodeContextIsCurrent, screenToWorld } from "./refinement-graph.js";
-import { isCurrentTouchEdgeSelection, isTouchClick, transitionTypeInteractions } from "./filter-interaction.js";
+import { isCurrentTouchEdgeSelection, isTouchClick, scrollTypeFiltersWithWheel, transitionTypeInteractions } from "./filter-interaction.js";
 import { workspaceLoadingPresentation } from "./workspace-loading.js";
 import { workspaceActionAvailability, workspaceReadSnapshotIsCurrent, isSharedViewer, isCurrentSaveRetry } from "./workspace-actions.js";
 import { createCloudUiController, onlineViewIdFromSearch, resetOnlineLibraryForIdentityChange } from "./cloud-ui.js";
@@ -4885,6 +4885,7 @@ function attachEvents() {
     renderGraph();
   });
   const filterGroup = byId("type-filters");
+  filterGroup.addEventListener("wheel", (event) => scrollTypeFiltersWithWheel(filterGroup, event), { passive: false });
   document.addEventListener("keydown", () => { filterInputModality = "keyboard"; }, true);
   filterGroup.addEventListener("pointerdown", (event) => {
     filterInputModality = event.pointerType || filterInputModality;

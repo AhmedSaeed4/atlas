@@ -75,3 +75,20 @@ export function isCurrentTouchEdgeSelection(selection, selectedEdgeId, activePro
     && selection.projectId === activeProjectId
     && selection.graphRef === activeGraph);
 }
+
+// Translate a vertical mouse wheel only while this strip can move horizontally.
+// Native horizontal/Shift scrolling and browser zoom keep their normal behavior.
+export function scrollTypeFiltersWithWheel(group, event) {
+  if (event.defaultPrevented || !event.cancelable || event.ctrlKey || event.metaKey || event.shiftKey
+      || Math.abs(event.deltaX || 0) >= Math.abs(event.deltaY || 0)) return false;
+  const maximum = Math.max(0, group.scrollWidth - group.clientWidth);
+  if (!maximum || !group.clientWidth) return false;
+  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? group.clientWidth : 1;
+  const delta = event.deltaY * unit;
+  if (!Number.isFinite(delta)) return false;
+  const next = Math.max(0, Math.min(maximum, group.scrollLeft + delta));
+  if (next === group.scrollLeft) return false;
+  event.preventDefault();
+  group.scrollLeft = next;
+  return true;
+}
