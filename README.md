@@ -2,6 +2,8 @@
 
 Atlas turns repository evidence into an editable software architecture map. It works for frontend, backend, API, mobile, desktop and Electron, CLI, library, infrastructure, and mixed projects. The app is plain HTML, CSS, and JavaScript modules. Local mode needs no account or cloud connection. Optional online workspaces use Google sign-in and Firestore for live, owner-controlled sharing. Atlas has no analytics or AI service and never uploads source repository files.
 
+The landing page, workspace (including shared viewers), and admin page use `public/favicon.svg`: the existing four-square Atlas mark on a dark tile, so browser tabs remain readable against light and dark browser themes. To check locally, reload `/`, `/workspace`, and `/admin`, then open `/favicon.svg` and confirm it loads; no remote image or new dependency is required.
+
 ## Run locally
 
 Use Node.js 18 or newer to serve the checked-in static files. The optional Firebase client is bundled locally; rebuilding it requires the development dependencies.
