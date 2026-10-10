@@ -24,6 +24,7 @@ import { clearOnlineOwnerDraftIfMatches, readOnlineOwnerDraft, readOnlineOwnerDr
 import { getSharedAccountSession, hasAccountSessionHint } from "./account-session.js";
 import { initAccountPanel, initSettingsPanel } from "./account-ui.js";
 import { createMapAdmissionController } from "./map-admission.js";
+import { verifyCloudAssociation } from "./cloud-reference-recovery.js";
 import { initLocalMapTip } from "./local-map-tip.js";
 import { createActionGate, startButtonProgress } from "./action-feedback.js";
 import { createChoicePicker } from "./choice-picker.js";
@@ -1530,12 +1531,17 @@ function renderMapSettings() {
       showMapSettingsMessage("Atlas is checking whether this map already has a Cloud Workspace copy. Check Cloud Workspace before moving or deleting it.");
       addMapSettingsAction("Check Cloud Workspace", () => selectLibraryMode("cloud"));
     } else if (linkedId && !linkedId.startsWith("pending:")) {
-      addMapSettingsAction("Open Cloud Workspace", () => {
-        const uid = currentAccountUid();
-        if (!uid || !mapSettingsController.isCurrent(target)) return;
-        closeMapSettings();
-        selectLibraryMode("cloud");
-        void openOwnedOnlineWorkspace({ id: linkedId, ownerId: uid });
+      addMapSettingsAction("Open Cloud Workspace", (current) => {
+        void runMapSettingsAction(current, () => checkLocalCloudReference(current.id, linkedId,
+          () => mapSettingsController.isCurrent(current)), (result) => {
+          if (result.status === "missing") {
+            mapSettingsData.message = "The previous cloud copy is no longer available. Your local map is saved; choose Move to Cloud Workspace to create a new copy.";
+          } else if (result.status === "present") {
+            closeMapSettings();
+            selectLibraryMode("cloud");
+            void openOwnedOnlineWorkspace(result.workspace);
+          }
+        }, { actionLabel: "Open Cloud Workspace", pendingLabel: "Checking…" });
       });
     } else {
       addMapSettingsAction("Move to Cloud Workspace", (current) => confirmMoveLocalTarget(current));
@@ -2131,6 +2137,28 @@ function applyPendingLocalOnline() {
   onlineController.queueSave(onlineGraphProject.graph);
   persist(false);
 }
+async function checkLocalCloudReference(projectId, workspaceId, isCurrent = () => true) {
+  const project = projects.find(item => item.id === projectId);
+  if (!project) return { status: "unverified" };
+  const uid = currentAccountUid();
+  const current = () => projects.includes(project) && currentAccountUid() === uid && isCurrent();
+  const result = await verifyCloudAssociation({
+    associations: cloudAssociations, projectId, workspaceId, ownerUid: uid,
+    getCurrentOwnerUid: currentAccountUid, isCurrent: current,
+    listWorkspaces: async () => {
+      const service = await accountSession.getService();
+      if (!current()) return { status: "stale" };
+      return service.listWorkspaces();
+    },
+    saveAssociations: saveCloudAssociations,
+  });
+  if (result.status === "missing") {
+    mapAdmissionController.forget({ projectId, workspaceId, ownerUid: uid });
+    if (currentMapAdmissionContext?.project === project) currentMapAdmissionContext = null;
+    renderLibrary();
+  }
+  return result;
+}
 async function reloadOnlineWorkspace() {
   const state = onlineController.state();
   try {
@@ -2141,7 +2169,22 @@ async function reloadOnlineWorkspace() {
     } else {
       const id = state.workspaceId || onlineTargetWorkspaceId;
       if (!id || !state.userUid) throw new Error("Sign in as the owner to reload this online workspace.");
-      await onlineController.openOwnedWorkspace(id, { localProjectId: onlineGraphProject?.localProjectId || associationForWorkspace(id) });
+      const localProjectId = onlineGraphProject?.localProjectId || associationForWorkspace(id);
+      if (state.routeUnavailable && localProjectId) {
+        const uid = currentAccountUid();
+        const current = () => !onlineRoute && currentAccountUid() === uid
+          && (onlineController.state().workspaceId || onlineTargetWorkspaceId) === id;
+        const result = await checkLocalCloudReference(localProjectId, id, current);
+        if (!current() || result.status === "stale") return;
+        if (result.status === "missing") {
+          if (returnToLocalWorkspace()) {
+            selectProject(localProjectId);
+            showToast("The previous cloud copy is no longer available. Your saved local map can be moved to Cloud Workspace again.");
+          }
+          return;
+        }
+      }
+      await onlineController.openOwnedWorkspace(id, { localProjectId });
     }
   } catch (error) { handleOnlineError(error); }
 }
@@ -4758,7 +4801,9 @@ function attachEvents() {
   byId("apply-local-online").addEventListener("click", applyPendingLocalOnline);
   byId("retry-autosave").addEventListener("click", () => runButtonAction(byId("retry-autosave"), "admission-retry:" + currentMapAdmissionContext?.project.id, "Retrying…", retryAutosaveAdmission));
   byId("return-local").addEventListener("click", returnToLocalWorkspace);
-  byId("reload-online").addEventListener("click", () => { void reloadOnlineWorkspace(); });
+  byId("reload-online").addEventListener("click", () => {
+    void runButtonAction(byId("reload-online"), "reload-online", "Checking…", reloadOnlineWorkspace);
+  });
   byId("retry-online-save").addEventListener("click", () => retryOnlineSaveWithFeedback(byId("retry-online-save")));
   byId("accept-conflict-online").addEventListener("click", () => retryOnlineSaveWithFeedback(byId("accept-conflict-online"), true));
   byId("reload-online-save").addEventListener("click", () => {
