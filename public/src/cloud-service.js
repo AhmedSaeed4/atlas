@@ -31,6 +31,7 @@ import {
 import { getApps, initializeApp } from "firebase/app";
 import { getCloudConfigStatus, isCloudConfigured, firebaseConfig } from "./cloud-config.js";
 import { subscribeWhenReady, waitForAuthSession } from "./cloud-subscription.js";
+import { createPopupSignIn } from "./auth-popup.js";
 import {
   CloudModelError,
   createRandomWorkspaceId,
@@ -137,6 +138,8 @@ export function createFirebaseAdapter(config, {
   workspaceIdFactory = createRandomWorkspaceId,
   commitBatch: injectedCommitBatch,
   readWorkspaceFromServer: injectedWorkspaceRead,
+  signInPopup = signInWithPopup,
+  signInBrowser,
 } = {}) {
   let app = providedApp;
   if (!app) {
@@ -166,6 +169,11 @@ export function createFirebaseAdapter(config, {
 
   const persistenceReady = injectedPersistenceReady ?? auth.authStateReady();
   const authSessionReady = (uid) => waitForAuthSession({ auth, persistenceReady, uid });
+  const openGooglePopup = createPopupSignIn(() => {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+    return signInPopup(auth, provider);
+  }, signInBrowser);
   const commitBatch = typeof injectedCommitBatch === "function"
     ? injectedCommitBatch
     : (batch) => batch.commit();
@@ -444,9 +452,7 @@ export function createFirebaseAdapter(config, {
     },
     signInGoogle: async () => {
       await persistenceReady;
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: "select_account" });
-      return signInWithPopup(auth, provider);
+      return openGooglePopup();
     },
     signOut: async () => {
       await persistenceReady;

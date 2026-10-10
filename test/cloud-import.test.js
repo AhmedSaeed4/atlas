@@ -111,3 +111,26 @@ test("storage failure refuses an upload whose retry candidate could be lost", as
   await assert.rejects(createCloudImportController(f.options).importMap({ graph, ownerUid: "owner-a" }), /No map was uploaded/);
   assert.equal(f.calls.length, 0);
 });
+
+
+test("reimporting identical JSON after a confirmed upload and deletion reserves a fresh candidate", async () => {
+  const f = fixture();
+  const live = new Map();
+  f.options.createWorkspace = async input => {
+    f.calls.push(input);
+    const workspace = { id: input.workspaceId, ownerId: input.ownerUid };
+    live.set(workspace.id, workspace);
+    return workspace;
+  };
+  const controller = createCloudImportController(f.options);
+  const first = await controller.importMap({ graph, ownerUid: "owner-a" });
+  live.delete(first.workspace.id);
+  const second = await controller.importMap({ graph, ownerUid: "owner-a" });
+  assert.notEqual(second.workspace.id, first.workspace.id);
+  assert.equal(live.has(second.workspace.id), true);
+  live.delete(second.workspace.id);
+  const afterReload = await createCloudImportController(f.options).importMap({ graph, ownerUid: "owner-a" });
+  assert.notEqual(afterReload.workspace.id, second.workspace.id);
+  assert.equal(live.has(afterReload.workspace.id), true);
+  assert.equal(f.values.size, 1);
+});
