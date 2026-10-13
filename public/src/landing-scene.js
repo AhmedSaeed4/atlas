@@ -1,4 +1,5 @@
 const HOME = { yaw: -.80, pitch: .60 };
+const IDLE_RETURN_DELAY = 5000, HOME_RETURN_DURATION = 2400;
 const DEFAULT_LABEL = "Your code. A clearer picture.";
 const LABELS = {
   interface: "Start with the code already in your project.",
@@ -113,6 +114,40 @@ export function sceneMotionStep(elapsed = 1000 / 60) {
   return 1 - Math.exp(-clamp(Number.isFinite(elapsed) ? elapsed : 1000 / 60, 0, 64) / 88);
 }
 
+// A single idle deadline; active gestures and hidden scenes never trigger it.
+export function createSceneIdleReturn(onIdle, { schedule = setTimeout, cancel = clearTimeout } = {}) {
+  let timer = null, pending = false, held = false, paused = false, revision = 0;
+  function clear() {
+    revision++;
+    if (timer !== null) cancel(timer);
+    timer = null;
+  }
+  function arm() {
+    clear();
+    if (!pending || held || paused) return;
+    const scheduledRevision = revision;
+    timer = schedule(() => {
+      if (scheduledRevision !== revision || !pending || held || paused) return;
+      timer = null; pending = false;
+      onIdle();
+    }, IDLE_RETURN_DELAY);
+  }
+  return {
+    interact(isHeld = false) { pending = true; held = isHeld; arm(); },
+    pause() { paused = true; clear(); },
+    resume() { if (paused) { paused = false; arm(); } },
+    cancel() { pending = false; held = false; clear(); }
+  };
+}
+
+// Fixed-duration easing keeps the automatic return separate from drag damping.
+export function sceneHomeReturnCamera(from, elapsed) {
+  const progress = clamp((Number.isFinite(elapsed) ? elapsed : 0) / HOME_RETURN_DURATION, 0, 1);
+  if (progress === 1) return { ...HOME };
+  if (progress === 0) return { ...from };
+  return easeSceneCamera(from, HOME, progress * progress * (3 - 2 * progress));
+}
+
 export function scenePolygonContains(point, polygon) {
   if (!point || ![point.x, point.y].every(Number.isFinite) || !Array.isArray(polygon) || polygon.length < 3 || polygon.some(p => !p || ![p.x, p.y].every(Number.isFinite))) return false;
   let inside = false;
@@ -138,6 +173,23 @@ export function mountLandingScene(root) {
   let base = { ...HOME }, current = { ...HOME }, hover = { x: 0, y: 0 }, active = null, hits = [], gesture = null;
   let lastFrame = 0, pulseStart = -Infinity, now = 0;
   let stageWidth = 0, stageHeight = 0, drawingRoom = { left: 0, top: 0 };
+  let homeReturn = null;
+  root.dataset.returning = "false";
+  const idleReturn = createSceneIdleReturn(() => {
+    if (gesture || !visible || document.hidden) return;
+    base = { ...HOME }; hover = { x: 0, y: 0 }; setActive(null);
+    homeReturn = { from: { ...current }, started: performance.now() };
+    root.dataset.returning = "true"; requestFrame();
+  });
+  function stopHomeReturn() {
+    if (!homeReturn) return;
+    base = { ...current }; hover = { x: 0, y: 0 }; homeReturn = null;
+    root.dataset.returning = "false";
+  }
+  function noteInteraction(held = false) {
+    stopHomeReturn();
+    idleReturn.interact(held);
+  }
   const pointOn = (panel, x, y) => ({ x: panel.o.x + panel.u.x * x + panel.v.x * y, y: panel.o.y + panel.u.y * x + panel.v.y * y, z: panel.o.z + panel.u.z * x + panel.v.z * y });
   const corners = panel => [[0, 0], [panel.w, 0], [panel.w, panel.h], [0, panel.h]].map(([x, y]) => pointOn(panel, x, y));
   const screen = point => {
@@ -357,8 +409,14 @@ export function mountLandingScene(root) {
     const easing = reduced.matches ? 1 : sceneMotionStep(lastFrame ? timestamp - lastFrame : 1000 / 60);
     lastFrame = timestamp;
     const target = { yaw: base.yaw + hover.x, pitch: clamp(base.pitch + hover.y, .18, 1.15) };
-    current = easeSceneCamera(current, target, easing);
-    let moving = Math.abs(Math.atan2(Math.sin(target.yaw - current.yaw), Math.cos(target.yaw - current.yaw))) + Math.abs(current.pitch - target.pitch) > .0005;
+    if (homeReturn) {
+      const elapsed = timestamp - homeReturn.started;
+      current = reduced.matches ? { ...HOME } : sceneHomeReturnCamera(homeReturn.from, elapsed);
+      if (reduced.matches || elapsed >= HOME_RETURN_DURATION) {
+        homeReturn = null; root.dataset.returning = "false";
+      }
+    } else current = easeSceneCamera(current, target, easing);
+    let moving = !!homeReturn || Math.abs(Math.atan2(Math.sin(target.yaw - current.yaw), Math.cos(target.yaw - current.yaw))) + Math.abs(current.pitch - target.pitch) > .0005;
     for (const panel of panels) {
       const lift = active === panel.id && !reduced.matches ? .075 : 0;
       lifts[panel.id] += (lift - lifts[panel.id]) * easing;
@@ -395,11 +453,12 @@ export function mountLandingScene(root) {
   const pointer = event => { const r = canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; };
   canvas.addEventListener("pointermove", event => {
     if (!event.isPrimary || (gesture && event.pointerId !== gesture.id)) return;
+    noteInteraction(!!gesture);
     const p = pointer(event);
     if (gesture) {
       const dx = event.clientX - gesture.x, dy = event.clientY - gesture.y;
       if (!gesture.dragging && Math.hypot(dx, dy) > 7) {
-        if (event.pointerType === "touch" && Math.abs(dy) > Math.abs(dx)) { gesture = null; return; }
+        if (event.pointerType === "touch" && Math.abs(dy) > Math.abs(dx)) { gesture = null; noteInteraction(); return; }
         gesture.dragging = true; canvas.setPointerCapture(event.pointerId); root.classList.add("is-dragging"); setActive(null);
       }
       if (gesture.dragging) {
@@ -413,37 +472,56 @@ export function mountLandingScene(root) {
   });
   canvas.addEventListener("pointerdown", event => {
     if (event.button !== 0 || !event.isPrimary) return;
+    noteInteraction(true);
     gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, camera: { ...current }, dragging: false };
     root.dataset.gesture = ""; stage.dataset.pointerFocus = "true"; stage.focus({ preventScroll: true });
   });
   function finish(event) {
-    if (gesture && event.pointerId !== gesture.id) return;
-    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    if (!gesture || event.pointerId !== gesture.id) return;
     gesture = null; root.classList.remove("is-dragging");
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    noteInteraction();
   }
   canvas.addEventListener("pointerup", finish); canvas.addEventListener("pointercancel", finish); canvas.addEventListener("lostpointercapture", finish);
   canvas.addEventListener("pointerleave", () => {
     if (gesture?.dragging) return;
-    gesture = null; setActive(null); hover = { x: 0, y: 0 }; requestFrame();
+    gesture = null; noteInteraction(); setActive(null); hover = { x: 0, y: 0 }; requestFrame();
   });
   stage.addEventListener("blur", () => { delete stage.dataset.pointerFocus; });
   root.addEventListener("keydown", event => {
     delete stage.dataset.pointerFocus;
     const changes = { ArrowLeft: [-16, 0], ArrowRight: [16, 0], ArrowUp: [0, -14], ArrowDown: [0, 14] };
     if (changes[event.key]) {
+      noteInteraction();
       event.preventDefault(); base = orbitSceneCamera(base, ...changes[event.key]); hover = { x: 0, y: 0 }; setActive(null); requestFrame();
     } else if (event.key === "Escape" || event.key === "0") {
+      stopHomeReturn(); idleReturn.cancel();
       event.preventDefault(); base = { ...HOME }; hover = { x: 0, y: 0 }; setActive(null); requestFrame();
     }
   });
   new ResizeObserver(resize).observe(stage);
   new MutationObserver(resize).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-  function stopFrame() { if (raf) cancelAnimationFrame(raf); raf = 0; lastFrame = 0; }
+  function stopFrame() {
+    const needsReturn = !!homeReturn || !!gesture;
+    stopHomeReturn();
+    if (gesture) {
+      const pointerId = gesture.id;
+      gesture = null; root.classList.remove("is-dragging");
+      if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+    }
+    if (needsReturn) idleReturn.interact();
+    idleReturn.pause();
+    if (raf) cancelAnimationFrame(raf); raf = 0; lastFrame = 0;
+  }
+  function resumeFrame() {
+    if (!visible || document.hidden) { stopFrame(); return; }
+    idleReturn.resume(); requestFrame();
+  }
   new IntersectionObserver(entries => {
     visible = entries.some(entry => entry.isIntersecting);
-    if (!visible) stopFrame(); else requestFrame();
+    resumeFrame();
   }).observe(canvas);
-  document.addEventListener("visibilitychange", () => { if (document.hidden) stopFrame(); else requestFrame(); });
+  document.addEventListener("visibilitychange", resumeFrame);
   reduced.addEventListener("change", () => { hover = { x: 0, y: 0 }; pulseStart = -Infinity; requestFrame(); });
   caption.textContent = DEFAULT_LABEL;
   resize();

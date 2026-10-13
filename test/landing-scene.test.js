@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame } from "../public/src/landing-scene.js";
+import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame, createSceneIdleReturn, sceneHomeReturnCamera } from "../public/src/landing-scene.js";
 
 test("the scene contains upright and horizontal world planes with independently returned geometry",()=>{
   const panels=createLandingScene();
@@ -118,4 +118,114 @@ test("one fixed expanded canvas contains the complete orbit while preserving the
     assert.deepEqual(sceneCanvasFrame(width, height, viewport, left), stable);
   }
   assert.ok(formerBottomCrop && formerSideCrop, "the sweep must reproduce both old edge crops");
+});
+
+
+function idleClock() {
+  let time = 0, nextId = 0;
+  const jobs = new Map();
+  return {
+    now: () => time,
+    schedule(callback, delay) { const id = nextId++; jobs.set(id, { callback, at: time + delay }); return id; },
+    cancel(id) { jobs.delete(id); },
+    pending: () => [...jobs.values()],
+    advance(elapsed) {
+      const target = time + elapsed;
+      for (;;) {
+        const next = [...jobs.entries()].filter(([, job]) => job.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        jobs.delete(next[0]); time = next[1].at; next[1].callback();
+      }
+      time = target;
+    }
+  };
+}
+
+test("the idle return waits five seconds after the most recent input and fires only once", () => {
+  const clock = idleClock(), calls = [];
+  const idle = createSceneIdleReturn(() => calls.push(clock.now()), clock);
+  clock.advance(8000);
+  assert.deepEqual(calls, []);
+  idle.interact();
+  const oldCallback = clock.pending()[0].callback;
+  clock.advance(4999);
+  assert.deepEqual(calls, []);
+  idle.interact();
+  oldCallback(); // A superseded callback must not reset a newly interacted-with scene.
+  assert.deepEqual(calls, []);
+  assert.equal(clock.pending().length, 1);
+  clock.advance(4999);
+  assert.deepEqual(calls, []);
+  clock.advance(1);
+  assert.deepEqual(calls, [17999]);
+  clock.advance(20000);
+  assert.equal(calls.length, 1, "returning home must not schedule ongoing idle polling");
+});
+
+test("holding a pointer prevents return until five seconds after release", () => {
+  const clock = idleClock(), calls = [];
+  const idle = createSceneIdleReturn(() => calls.push(clock.now()), clock);
+  idle.interact();
+  clock.advance(2000);
+  idle.interact(true);
+  assert.equal(clock.pending().length, 0);
+  clock.advance(15000);
+  idle.interact(true);
+  clock.advance(15000);
+  assert.deepEqual(calls, []);
+  idle.interact(false);
+  clock.advance(4999);
+  assert.deepEqual(calls, []);
+  clock.advance(1);
+  assert.deepEqual(calls, [37000]);
+});
+
+test("hidden or offscreen pauses and manual reset discard stale idle deadlines", () => {
+  const clock = idleClock(), calls = [];
+  const idle = createSceneIdleReturn(() => calls.push(clock.now()), clock);
+  idle.interact();
+  clock.advance(2000);
+  const beforePause = clock.pending()[0].callback;
+  idle.pause();
+  beforePause();
+  clock.advance(10000);
+  assert.deepEqual(calls, []);
+  assert.equal(clock.pending().length, 0);
+  idle.resume();
+  clock.advance(4000);
+  idle.resume(); // An ordinary visibility observation must not restart a running deadline.
+  clock.advance(999);
+  assert.deepEqual(calls, []);
+  clock.advance(1);
+  assert.deepEqual(calls, [17000]);
+  idle.interact();
+  const beforeReset = clock.pending()[0].callback;
+  idle.cancel();
+  beforeReset();
+  clock.advance(10000);
+  assert.equal(calls.length, 1);
+  assert.equal(clock.pending().length, 0);
+});
+
+test("the slow home return follows the short arc, eases at both ends and finishes exactly at home", () => {
+  const from = { yaw: 2.9, pitch: .99 }, home = { yaw: -.8, pitch: .6 };
+  const distance = camera => Math.hypot(Math.atan2(Math.sin(home.yaw - camera.yaw), Math.cos(home.yaw - camera.yaw)), home.pitch - camera.pitch);
+  assert.deepEqual(sceneHomeReturnCamera(from, 0), from);
+  assert.deepEqual(sceneHomeReturnCamera(from, -10), from);
+  let previous = distance(from);
+  for (let elapsed = 10; elapsed <= 2400; elapsed += 10) {
+    const camera = sceneHomeReturnCamera(from, elapsed);
+    assert.ok(distance(camera) <= previous + 1e-12, "the camera must approach home without an overshoot");
+    previous = distance(camera);
+  }
+  const halfway = sceneHomeReturnCamera(from, 1200);
+  assert.ok(halfway.yaw < -2, "return must cross the full-turn boundary along the short arc");
+  assert.ok(Math.abs(distance(halfway) - distance(from) / 2) < 1e-12);
+  const firstStep = distance(from) - distance(sceneHomeReturnCamera(from, 10));
+  const middleStep = distance(sceneHomeReturnCamera(from, 1200)) - distance(sceneHomeReturnCamera(from, 1210));
+  const lastStep = distance(sceneHomeReturnCamera(from, 2390));
+  assert.ok(firstStep < middleStep / 20 && lastStep < middleStep / 20, "start and finish must be gentle");
+  assert.deepEqual(sceneHomeReturnCamera(from, 2400), home);
+  assert.deepEqual(sceneHomeReturnCamera(from, 30000), home);
+  assert.deepEqual(from, { yaw: 2.9, pitch: .99 });
 });
