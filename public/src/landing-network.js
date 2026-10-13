@@ -20,27 +20,27 @@ function createLandingNetwork() {
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   function makeCloud(keys) {
     const nodes = [], hubs = {};
-    for (let i = 0; i < 224; i++) {
+    for (let i = 0; i < 176; i++) {
       const azimuth = random() * Math.PI * 2;
       const vertical = random() * 2 - 1;
       const radius = Math.cbrt(random());
       const circumference = Math.sqrt(1 - vertical * vertical);
       const y = vertical * radius;
       const key = keys[clamp(Math.floor((y + 1) / 2 * keys.length), 0, keys.length - 1)];
-      const prominent = random() > 0.92;
-      nodes.push({ x: Math.cos(azimuth) * circumference * radius, y, z: Math.sin(azimuth) * circumference * radius, key, r: prominent ? 5 + random() * 3 : 1.1 + random() * 1.4, phase: random() * Math.PI * 2, hub: false });
+      const prominent = random() > 0.96;
+      nodes.push({ x: Math.cos(azimuth) * circumference * radius, y, z: Math.sin(azimuth) * circumference * radius, key, r: prominent ? 4.2 + random() * 1.6 : 0.9 + random() * 1.1, phase: random() * Math.PI * 2, hub: false });
     }
     const hubPositions = { interface: [-0.7, -0.48, 0.1], services: [-0.68, 0.03, 0.4], async: [-0.44, 0.67, 0.2], web: [0.44, -0.74, 0.35], api: [0.76, -0.3, 0.2], data: [0.71, 0.07, 0.3], queue: [0.68, 0.49, 0.18], worker: [0.24, 0.78, 0.3] };
     keys.forEach((key) => {
       hubs[key] = nodes.length;
       const [x, y, z] = hubPositions[key];
-      nodes.push({ x, y, z, key, r: 5.2 + random() * 2.4, phase: random() * 6, hub: true });
+      nodes.push({ x, y, z, key, r: 4.8 + random() * 1.6, phase: random() * 6, hub: true });
     });
     // Nearest-prior links keep every point in the same connected network.
     const edgeKeys = new Set(), edges = [];
     nodes.forEach((node, source) => {
       const neighbours = nodes.map((other, target) => ({ target, distance: (node.x - other.x) ** 2 + (node.y - other.y) ** 2 + (node.z - other.z) ** 2 })).filter((n) => n.target !== source).sort((a, b) => a.distance - b.distance);
-      const links = [...neighbours.slice(0, node.hub ? 6 : 4), ...source ? [neighbours.find((n) => n.target < source)] : []];
+      const links = [...neighbours.slice(0, node.hub ? 4 : 3), ...source ? [neighbours.find((n) => n.target < source)] : []];
       links.forEach(({ target }) => {
         const from = Math.min(source, target), to = Math.max(source, target), key = `${from}:${to}`;
         if (!edgeKeys.has(key)) {
@@ -48,6 +48,12 @@ function createLandingNetwork() {
           edges.push([from, to]);
         }
       });
+    });
+    // Give the labeled layer/component relationships real paths through the mesh.
+    pairs.forEach(([layer, part]) => {
+      const from = Math.min(hubs[layer], hubs[part]), to = Math.max(hubs[layer], hubs[part]);
+      const key = from + ":" + to;
+      if (!edgeKeys.has(key)) { edgeKeys.add(key); edges.push([from, to]); }
     });
     return { nodes, edges, hubs };
   }
@@ -63,6 +69,37 @@ function getLandingNetworkRelations(id) {
   if (Object.hasOwn(groups, id)) return new Set([id, ...groups[id]]);
   const layer = Object.keys(groups).find((key) => groups[key].includes(id));
   return new Set([id, layer]);
+}
+// One scale for all axes; hover and rotation never change the framing.
+function getLandingNetworkFrame(width, height, matrix) {
+  const stacked = width < 780;
+  const left = stacked ? 12 : matrix.right + 28;
+  const top = stacked ? matrix.bottom + 48 : 28;
+  const right = width - 12, bottom = height - 28;
+  const radius = Math.max(1, (Math.min(right - left, bottom - top) / 2 - 14) / 1.015);
+  return { cx: (left + right) / 2, cy: (top + bottom) / 2, rx: radius, ry: radius };
+}
+function projectLandingNetworkNode(node, frame, yaw, pitch) {
+  const ct = Math.cos(yaw), st = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  const x = node.x * ct + node.z * st, z = node.z * ct - node.x * st;
+  const y = node.y * cp - z * sp, depth = node.y * sp + z * cp;
+  const perspective = 6 / (6 - depth);
+  return { ...node, x: frame.cx + x * frame.rx * perspective, y: frame.cy + y * frame.ry * perspective, depth, scale: perspective };
+}
+function getLandingNetworkHighlight(cloud, key, pointIndex = null) {
+  const nodes = new Set(), edges = new Set();
+  if (!getLandingNetworkDetails(key)) return { nodes, edges };
+  const directPoint = Number.isInteger(pointIndex) && cloud.nodes[pointIndex]?.key === key;
+  const seeds = new Set(directPoint ? [pointIndex] : [...getLandingNetworkRelations(key)].map(id => cloud.hubs[id]));
+  seeds.forEach(index => nodes.add(index));
+  cloud.edges.forEach(([from, to], index) => {
+    if (seeds.has(from) || seeds.has(to)) {
+      edges.add(index);
+      nodes.add(from);
+      nodes.add(to);
+    }
+  });
+  return { nodes, edges };
 }
 function containsNetworkPoint(point, region) {
   if (!point || !region || ![point.x, point.y, region.cx, region.cy, region.rx, region.ry].every(Number.isFinite) || region.rx <= 0 || region.ry <= 0) return false;
@@ -93,12 +130,14 @@ function mountLandingNetwork(root) {
   if (!context) return null;
   const rows = [...stage.querySelectorAll("[data-item]")];
   const reduced = matchMedia("(prefers-reduced-motion: reduce)");
-  const clouds = [createLandingNetwork()];
+  const cloud = createLandingNetwork();
+  const nodeLight = new Float32Array(cloud.nodes.length), edgeLight = new Float32Array(cloud.edges.length);
+  let highlight = { nodes: new Set(), edges: new Set() }, focusAmount = 0, highlightState = "";
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
   let inView = true;
-  let width = 0, height = 0, mobile = false, networkCenterX = 0, networkRadiusX = 0, readingZones = [], anchors = {}, palette = {}, sprites = [];
-  let selected = null, preview = null, motion = !reduced.matches;
-  let yaw = 0.22, pitch = -0.12, targetYaw = yaw, targetPitch = pitch, mouseX = 0, mouseY = 0;
+  let width = 0, height = 0, mobile = false, frame = null, anchors = {}, palette = {}, sprites = [];
+  let selected = null, preview = null, selectedPoint = null, previewPoint = null, motion = !reduced.matches;
+  let yaw = 0.22, pitch = -0.12, targetYaw = yaw, targetPitch = pitch;
   let mouse = { x: 0, y: 0, inside: false }, drag = null, raf = null, lastTime = 0, visualTime = 0;
   let projected = [], rowState = "";
   function updateText() {
@@ -119,16 +158,17 @@ function mountLandingNetwork(root) {
     stage.dataset.selected = selected || "";
     stage.dataset.hover = preview || "";
   }
-  function setPreview(id) {
-    if (preview !== id) {
+  function setPreview(id, pointIndex = null) {
+    if (preview !== id || previewPoint !== pointIndex) {
       preview = id;
+      previewPoint = pointIndex;
       updateText();
       requestFrame();
     }
   }
   function makePalette() {
     const dark = document.documentElement.dataset.theme === "dark";
-    palette = dark ? { ink: "235,238,225", accent: "222,239,82", shadow: "0,0,0", edge: 0.23, dim: 0.075, neutral: 0.16 } : { ink: "33,39,33", accent: "195,211,44", shadow: "27,33,28", edge: 0.29, dim: 0.08, neutral: 0.19 };
+    palette = dark ? { ink: "235,238,225", accent: "222,239,82", trace: "204,224,79", shadow: "0,0,0", neutral: 0.22 } : { ink: "33,39,33", accent: "187,204,41", trace: "100,120,25", shadow: "27,33,28", neutral: 0.27 };
     sprites = [false, true].map((accent) => {
       const sprite = document.createElement("canvas");
       sprite.width = 80;
@@ -151,72 +191,38 @@ function mountLandingNetwork(root) {
     });
     requestFrame();
   }
-  // Measure on resize only; animation uses cached label anchors.
+  // Cache geometry and label anchors on resize, never during an orbit.
   function resize() {
-    mobile = stage.clientWidth < 720;
-    const layout = mobile ? "stack" : "side";
-    if (root.dataset.layout !== layout) root.dataset.layout = layout;
     const rect = stage.getBoundingClientRect();
     width = rect.width;
     height = rect.height;
-    const matrixBounds = root.querySelector(".matrix").getBoundingClientRect();
-    const networkLeft = matrixBounds.right - rect.left + (width < 900 ? 22 : 40);
-    const networkRoom = width - networkLeft - 14;
-    networkCenterX = mobile ? width * 0.5 : networkLeft + networkRoom / 2;
-    networkRadiusX = Math.max(45, Math.min(networkRoom * 0.47, height * 0.48));
-    readingZones = [...root.querySelectorAll(".column")].map((column) => {
-      const box = column.getBoundingClientRect();
-      return { x: box.left - rect.left - 7, y: box.top - rect.top - 5, w: box.width + 14, h: box.height + 10 };
-    });
+    mobile = width < 780;
+    root.dataset.layout = mobile ? "stack" : "side";
+    const matrix = root.querySelector(".matrix").getBoundingClientRect();
+    frame = getLandingNetworkFrame(width, height, { right: matrix.right - rect.left, bottom: matrix.bottom - rect.top });
+    stage.dataset.radius = frame.rx.toFixed(2);
     const ratio = Math.min(devicePixelRatio || 1, 1.75);
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     anchors = {};
     rows.forEach((row) => {
-      const bounds = row.getBoundingClientRect();
-      anchors[row.dataset.item] = { left: bounds.left - rect.left, right: bounds.right - rect.left, y: bounds.top - rect.top + bounds.height / 2 };
+      const box = row.getBoundingClientRect();
+      anchors[row.dataset.item] = { left: box.left - rect.left, right: box.right - rect.left, y: box.top - rect.top + box.height / 2 };
     });
-    stage.dataset.points = String(clouds.reduce((sum, cloud) => sum + cloud.nodes.length, 0));
-    stage.dataset.networks = String(clouds.length);
+    stage.dataset.points = String(cloud.nodes.length);
+    stage.dataset.networks = "1";
     if (sprites.length) {
       if (raf) cancelAnimationFrame(raf);
       raf = null;
       draw(performance.now());
     }
   }
-  function geometry() {
-    if (mobile) {
-      if (width < 520) return { cx: width * 0.5, cy: 407, rx: width * 0.445, ry: 108 };
-      return { cx: width * 0.5, cy: (305 + height - 64) / 2, rx: Math.min(width * 0.445, 225), ry: Math.min(185, (height - 369) * 0.475) };
-    }
-    return { cx: networkCenterX, cy: height * 0.49, rx: networkRadiusX, ry: Math.min(230, height * 0.4) };
-  }
   function interactionRegion() {
-    const shape = geometry();
-    // Include projected edge dots and their small radii, without a rectangular hit area.
-    return { ...shape, rx: shape.rx * 1.04 + 8, ry: shape.ry * 1.04 + 8 };
-  }
-  function project(node, shape, index, tiltYaw, tiltPitch) {
-    const turn = tiltYaw, ct = Math.cos(turn), st = Math.sin(turn), cp = Math.cos(tiltPitch), sp = Math.sin(tiltPitch);
-    const x = node.x * ct + node.z * st, z = node.z * ct - node.x * st;
-    const y = node.y * cp - z * sp, depth = node.y * sp + z * cp;
-    const perspective = 3.9 / (3.9 - depth);
-    let px = shape.cx + x * shape.rx * perspective, py = shape.cy + y * shape.ry * perspective;
-    if (motion && !reduced.matches) {
-      px += Math.sin(visualTime * 23e-5 + node.phase) * 1.8;
-      py += Math.cos(visualTime * 19e-5 + node.phase) * 1.4;
-    }
-    if (mouse.inside && !drag && !reduced.matches) {
-      const dx = mouse.x - px, dy = mouse.y - py, distance = Math.hypot(dx, dy);
-      const attraction = Math.exp(-(distance * distance) / 11500) * 7;
-      px += dx / (distance + 24) * attraction;
-      py += dy / (distance + 24) * attraction;
-    }
-    return { ...node, x: px, y: py, depth, scale: perspective };
+    return { ...frame, rx: frame.rx * 1.015 + 8, ry: frame.ry * 1.015 + 8 };
   }
   function curve(a, b, alpha, active, bend = 0.5) {
-    context.strokeStyle = `rgba(${active ? palette.accent : palette.ink},${alpha})`;
+    context.strokeStyle = `rgba(${active ? palette.trace : palette.ink},${alpha})`;
     context.lineWidth = active ? 1 : 0.65;
     context.beginPath();
     context.moveTo(a.x, a.y);
@@ -226,103 +232,128 @@ function mountLandingNetwork(root) {
   }
   function draw(time) {
     raf = null;
-    if (document.hidden || !inView) return;
+    if (document.hidden || !inView || !frame) return;
     const dt = Math.min(40, lastTime ? time - lastTime : 16);
     lastTime = time;
-    if (motion && !reduced.matches) visualTime += dt;
+    const active = preview || selected;
+    const pointIndex = preview ? previewPoint : selectedPoint;
+    const state = active + ":" + pointIndex;
+    if (state !== highlightState) {
+      highlightState = state;
+      highlight = getLandingNetworkHighlight(cloud, active, pointIndex);
+    }
+    // The form drifts as one object. Hold it still while someone explores it.
+    const drifting = motion && !reduced.matches && !mouse.inside && !active && !drag;
+    if (drifting) visualTime += dt;
     const easing = reduced.matches ? 1 : 1 - Math.exp(-dt / 80);
     yaw += (targetYaw - yaw) * easing;
     pitch += (targetPitch - pitch) * easing;
-    const active = preview || selected, connected = getLandingNetworkRelations(active);
-    const drift = motion && !reduced.matches ? Math.sin(visualTime * 11e-5) * 0.035 : 0;
-    const hoverYaw = mouse.inside && motion && !reduced.matches && !drag ? mouseX * 0.055 : 0;
-    const hoverPitch = mouse.inside && motion && !reduced.matches && !drag ? mouseY * 0.035 : 0;
+    const drift = Math.sin(visualTime * 0.00006) * 0.035;
+    const fade = reduced.matches ? 1 : 1 - Math.exp(-dt / 140);
+    let fading = false;
+    const approach = (value, target) => {
+      const next = value + (target - value) * fade;
+      if (Math.abs(target - next) < 0.002) return target;
+      fading = true;
+      return next;
+    };
+    focusAmount = approach(focusAmount, active ? 1 : 0);
+    nodeLight.forEach((value, index) => { nodeLight[index] = approach(value, highlight.nodes.has(index) ? 1 : 0); });
+    edgeLight.forEach((value, index) => { edgeLight[index] = approach(value, highlight.edges.has(index) ? 1 : 0); });
     context.clearRect(0, 0, width, height);
-    projected = clouds.map((cloud, index) => {
-      const shape = geometry(index);
-      return cloud.nodes.map((node) => project(node, shape, index, yaw + drift + hoverYaw, pitch + hoverPitch));
-    });
-    clouds.forEach((cloud, index) => {
-      const points2 = projected[index];
-      cloud.edges.forEach(([source, target]) => {
-        const a = points2[source], b = points2[target], emphasized = connected.has(a.key) && connected.has(b.key);
-        const depth = clamp(0.72 + (a.depth + b.depth) * 0.16, 0.38, 1.1);
-        context.strokeStyle = `rgba(${palette.ink},${(active ? emphasized ? palette.edge : palette.dim : palette.neutral) * depth})`;
-        context.lineWidth = emphasized ? 0.7 : 0.55;
-        context.beginPath();
-        context.moveTo(a.x, a.y);
-        context.lineTo(b.x, b.y);
+    projected = cloud.nodes.map((node, index) => ({ ...projectLandingNetworkNode(node, frame, yaw + drift, pitch), index }));
+    cloud.edges.forEach(([from, to], index) => {
+      const a = projected[from], b = projected[to], light = edgeLight[index];
+      const depth = clamp(0.65 + (a.depth + b.depth) * 0.27, 0.18, 1.12);
+      context.strokeStyle = "rgba(" + palette.ink + "," + palette.neutral * depth * (1 - focusAmount * 0.45) + ")";
+      context.lineWidth = 0.6;
+      context.beginPath();
+      context.moveTo(a.x, a.y);
+      context.lineTo(b.x, b.y);
+      context.stroke();
+      if (light > 0.002) {
+        context.strokeStyle = "rgba(" + palette.trace + "," + light * 0.68 * depth + ")";
+        context.lineWidth = 0.9;
         context.stroke();
-      });
-      Object.entries(cloud.hubs).forEach(([key, nodeIndex]) => {
-        const hub = points2[nodeIndex], anchor = anchors[key];
-        if (!anchor || Object.hasOwn(groups, key)) return;
-        const isPart = !Object.hasOwn(groups, key);
-        const end = { x: isPart ? anchor.right + 9 : anchor.left - 9, y: anchor.y };
-        if (mobile) {
-          const lane = isPart ? width - 2 : 2;
-          context.strokeStyle = `rgba(${connected.has(key) ? palette.accent : palette.ink},${connected.has(key) ? 0.55 : 0.16})`;
-          context.lineWidth = connected.has(key) ? 0.9 : 0.6;
-          context.beginPath();
-          context.moveTo(hub.x, hub.y);
-          context.bezierCurveTo(lane, hub.y, lane, anchor.y, lane, anchor.y);
-          context.stroke();
-        } else curve(hub, end, connected.has(key) ? 0.63 : 0.18, connected.has(key), 0.48);
-      });
+      }
     });
-    const points = projected.flat().sort((a, b) => a.depth - b.depth);
+    // Quiet threads tie labels into the illustration; focused paths strengthen.
+    Object.entries(cloud.hubs).forEach(([key, index]) => {
+      if (Object.hasOwn(groups, key)) return;
+      const hub = projected[index], anchor = anchors[key], light = nodeLight[index];
+      if (mobile) {
+        const lane = width - 5;
+        context.strokeStyle = "rgba(" + palette.ink + ",0.06)";
+        context.lineWidth = 0.6;
+        context.beginPath();
+        context.moveTo(anchor.right + 6, anchor.y);
+        context.bezierCurveTo(lane, anchor.y, lane, frame.cy - frame.ry, hub.x, hub.y);
+        context.stroke();
+        if (light > 0.002) {
+          context.strokeStyle = "rgba(" + palette.trace + "," + light * 0.38 + ")";
+          context.stroke();
+        }
+      } else {
+        const end = { x: anchor.right + 10, y: anchor.y };
+        curve(end, hub, 0.10, false, 0.48);
+        if (light > 0.002) curve(end, hub, light * 0.5, true, 0.48);
+      }
+    });
+    const points = [...projected].sort((a, b) => a.depth - b.depth);
     points.forEach((point) => {
-      const emphasized = connected.has(point.key), alpha = active ? emphasized ? 0.95 : 0.55 : 0.84;
+      const light = nodeLight[point.index];
       const radius = point.r * point.scale;
-      context.globalAlpha = alpha * clamp(0.83 + point.depth * 0.2, 0.45, 1);
+      context.globalAlpha = clamp(0.60 + point.depth * 0.35, 0.24, 1) * (1 - focusAmount * 0.24) + light * 0.15;
       if (point.r > 4) {
         const size = radius * 80 / 17;
-        context.drawImage(sprites[point.hub && emphasized ? 1 : 0], point.x - radius * 36 / 17, point.y - radius * 36 / 17, size, size);
+        context.drawImage(sprites[0], point.x - radius * 36 / 17, point.y - radius * 36 / 17, size, size);
       } else {
-        context.fillStyle = `rgb(${point.hub && emphasized ? palette.accent : palette.ink})`;
+        context.fillStyle = "rgb(" + palette.ink + ")";
         context.beginPath();
         context.arc(point.x, point.y, radius, 0, Math.PI * 2);
         context.fill();
       }
-      if (point.hub && point.key === active) {
-        context.globalAlpha = 0.4;
-        context.strokeStyle = `rgb(${palette.accent})`;
+      if (light > 0.002) {
+        context.globalAlpha = light * 0.92;
+        context.fillStyle = "rgb(" + (point.hub ? palette.accent : palette.trace) + ")";
+        context.beginPath();
+        context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        context.fill();
+      }
+      if (light > 0.002 && (point.index === pointIndex || point.hub && point.key === active)) {
+        context.globalAlpha = light * 0.38;
+        context.strokeStyle = "rgb(" + palette.trace + ")";
         context.lineWidth = 0.8;
         context.beginPath();
-        context.arc(point.x, point.y, radius + 4, 0, Math.PI * 2);
+        context.arc(point.x, point.y, radius + 5, 0, Math.PI * 2);
         context.stroke();
       }
     });
     context.globalAlpha = 1;
-    context.save();
-    // Clear behind the fixed reading columns without boxing in the mesh.
-    context.globalCompositeOperation = "destination-out";
-    context.filter = "blur(10px)";
-    context.fillStyle = "#000";
-    readingZones.forEach((zone) => context.fillRect(zone.x - 9, zone.y - 9, zone.w + 18, zone.h + 18));
-    context.restore();
     pairs.forEach(([layer, part]) => {
       const from = anchors[layer], to = anchors[part];
-      const emphasized = connected.has(layer) && connected.has(part);
-      curve({ x: from.right + 8, y: from.y }, { x: to.left - 8, y: to.y }, emphasized ? 0.85 : 0.2, emphasized, 0.47);
+      const light = Math.min(nodeLight[cloud.hubs[layer]], nodeLight[cloud.hubs[part]]);
+      const a = { x: from.right + 8, y: from.y }, b = { x: to.left - 8, y: to.y };
+      curve(a, b, 0.16, false, 0.47);
+      if (light > 0.002) curve(a, b, light * 0.7, true, 0.47);
     });
     const viewYaw = yaw.toFixed(3), viewPitch = pitch.toFixed(3);
     if (stage.dataset.yaw !== viewYaw) stage.dataset.yaw = viewYaw;
     if (stage.dataset.pitch !== viewPitch) stage.dataset.pitch = viewPitch;
-    if (motion && !reduced.matches || Math.abs(targetYaw - yaw) > 5e-4 || Math.abs(targetPitch - pitch) > 5e-4) requestFrame();
+    if (drifting || fading || Math.abs(targetYaw - yaw) > 5e-4 || Math.abs(targetPitch - pitch) > 5e-4) requestFrame();
   }
   function requestFrame() {
     if (!raf && !document.hidden && inView && width && sprites.length) raf = requestAnimationFrame(draw);
   }
   function nearest(x, y) {
-    let closest = null, distance = 24;
-    projected.flat().forEach((point) => {
-      if (readingZones.some((zone) => point.x >= zone.x && point.x <= zone.x + zone.w && point.y >= zone.y && point.y <= zone.y + zone.h)) return;
+    if (!frame || !containsNetworkPoint({ x, y }, interactionRegion())) return null;
+    // Retaining a nearby point prevents flicker between densely spaced neighbours.
+    const current = projected[previewPoint];
+    if (current && Math.hypot(current.x - x, current.y - y) < Math.max(13, current.r + 7)) return current;
+    let closest = null, distance = 19;
+    projected.forEach((point) => {
       const d = Math.hypot(point.x - x, point.y - y);
-      if (d < distance) {
-        closest = point;
-        distance = d;
-      }
+      if (d < distance) { closest = point; distance = d; }
     });
     return closest;
   }
@@ -355,6 +386,7 @@ function mountLandingNetwork(root) {
     row.addEventListener("blur", () => setPreview(null));
     row.addEventListener("click", () => {
       selected = selected === id ? null : id;
+      selectedPoint = null;
       updateText();
       requestFrame();
     });
@@ -364,8 +396,6 @@ function mountLandingNetwork(root) {
     const overNetwork = containsNetworkPoint(point, interactionRegion()) && !event.target.closest("button,a");
     mouse = { ...point, inside: overNetwork };
     stage.classList.toggle("is-over-network", overNetwork);
-    mouseX = (point.x / width - 0.5) * 2;
-    mouseY = (point.y / height - 0.5) * 2;
     if (drag && drag.id === event.pointerId) {
       const dx = point.x - drag.last.x, dy = point.y - drag.last.y;
       rotate(dx * 5e-3, dy * 35e-4);
@@ -373,7 +403,8 @@ function mountLandingNetwork(root) {
       drag.distance += Math.hypot(dx, dy);
     } else {
       const row = event.target.closest("[data-item]");
-      setPreview(row ? row.dataset.item : event.target.closest("button") ? null : nearest(point.x, point.y)?.key || null);
+      const hit = overNetwork ? nearest(point.x, point.y) : null;
+      setPreview(row ? row.dataset.item : hit?.key || null, row ? null : hit?.index ?? null);
     }
     requestFrame();
   });
@@ -386,7 +417,7 @@ function mountLandingNetwork(root) {
     }
   });
   stage.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest("button,a")) return;
+    if (event.button !== 0 || event.isPrimary === false || drag || event.target.closest("button,a")) return;
     const point = position(event);
     if (!containsNetworkPoint(point, interactionRegion())) return;
     drag = { id: event.pointerId, start: point, last: point, distance: 0 };
@@ -406,7 +437,9 @@ function mountLandingNetwork(root) {
     if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
     if (!cancelled && distance < 5) {
       const point = position(event);
-      selected = nearest(point.x, point.y)?.key || null;
+      const hit = nearest(point.x, point.y);
+      selected = hit?.key || null;
+      selectedPoint = hit?.index ?? null;
       updateText();
     }
     requestFrame();
@@ -491,5 +524,8 @@ export {
   getLandingNetworkDetails,
   getLandingNetworkRelations,
   getLandingNetworkWheelRotation,
+  getLandingNetworkFrame,
+  projectLandingNetworkNode,
+  getLandingNetworkHighlight,
   mountLandingNetwork
 };

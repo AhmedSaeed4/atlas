@@ -47,7 +47,7 @@ html[data-theme=light] .network-demo {
   background: var(--landing-accent);
 }
 .network-demo .study {
-  height: 540px;
+  height: clamp(440px, 43cqw, 520px);
   margin-top: 22px;
   position: relative;
   isolation: isolate;
@@ -70,7 +70,7 @@ html[data-theme=light] .network-demo {
 }
 .network-demo .field-label {
   position: absolute;
-  top: 30px;
+  top: 8px;
   right: 2%;
   display: flex;
   align-items: center;
@@ -88,13 +88,14 @@ html[data-theme=light] .network-demo {
 }
 .network-demo .matrix {
   position: absolute;
-  top: 123px;
+  top: 50%;
   left: 0;
-  width: 43%;
+  width: 39%;
   max-width: 460px;
+  transform: translateY(-50%);
   display: grid;
   grid-template-columns: minmax(0, .48fr) minmax(0, .52fr);
-  gap: 80px;
+  gap: clamp(44px, 5.5cqw, 68px);
   pointer-events: none;
 }
 .network-demo .column {
@@ -109,7 +110,7 @@ html[data-theme=light] .network-demo {
   white-space: nowrap;
 }
 .network-demo .layers {
-  padding-top: 49px;
+  padding-top: 46px;
 }
 .network-demo .row {
   position: relative;
@@ -117,14 +118,14 @@ html[data-theme=light] .network-demo {
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 49px;
+  min-height: 46px;
   padding: 0;
   border: 0;
   border-top: 1px solid var(--landing-border);
   color: var(--landing-ink);
   background: transparent;
   text-align: left;
-  font-size: clamp(20px, 2.6cqw, 27px);
+  font-size: clamp(20px, 2.15cqw, 26px);
   font-weight: 400;
   letter-spacing: -.045em;
   white-space: nowrap;
@@ -240,26 +241,26 @@ html[data-theme=light] .network-demo {
   font-size: 7px;
   color: var(--landing-quiet);
 }
-/* Size the narrow layout before JavaScript starts, avoiding a load-time jump. */
-@container (width < 720px) {
+/* Stack before the globe or either reading column needs to be squeezed. */
+@container (width < 780px) {
   .network-demo .study {
-    height: clamp(565px, calc(360px + 52cqw), 740px);
+    height: calc(328px + clamp(280px, 64cqw, 460px));
   }
   .network-demo .matrix {
-    top: 39px;
-    width: 100%;
+    top: 24px;
+    width: min(100% - 20px, 580px);
     max-width: none;
-    gap: clamp(48px, 11cqw, 80px);
+    transform: none;
+    gap: clamp(40px, 10cqw, 80px);
   }
   .network-demo .row {
-    font-size: clamp(18px, 4cqw, 24px);
+    font-size: clamp(18px, 3.7cqw, 24px);
     min-height: 40px;
   }
-  .network-demo .column h2 {
-    font-size: 8px;
-  }
+  .network-demo .layers { padding-top: 40px; }
+  .network-demo .column h2 { font-size: 9px; }
   .network-demo .field-label {
-    top: 289px;
+    top: 290px;
     left: 0;
     right: auto;
   }
@@ -303,9 +304,6 @@ html[data-theme=light] .network-demo {
   }
 }
 
-@container (720px <= width < 1000px) {
-  .network-demo .matrix { gap: 58px; }
-}
 @media (max-width: 700px) {
   .network-section { padding-top: 28px; padding-bottom: 60px; }
 }

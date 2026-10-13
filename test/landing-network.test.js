@@ -5,6 +5,10 @@ import {
   getLandingNetworkDetails,
   getLandingNetworkRelations,
   getLandingNetworkWheelRotation,
+  getLandingNetworkFrame,
+  projectLandingNetworkNode,
+  getLandingNetworkHighlight,
+  mountLandingNetwork,
 } from "../public/src/landing-network.js";
 
 test("the illustration is one connected finite network within a small rendering budget", () => {
@@ -96,4 +100,165 @@ test("pixel, line and page wheel input remains bounded and supports tilt", () =>
   assert.deepEqual(getLandingNetworkWheelRotation({ deltaY: 1, deltaMode: 2 }, point, region, 540), pixel);
   assert.deepEqual(getLandingNetworkWheelRotation({ deltaY: 99999 }, point, region), pixel);
   assert.deepEqual(getLandingNetworkWheelRotation({ deltaX: 100, deltaY: 50, shiftKey: true }, point, region), { yaw: .2, pitch: .09 });
+});
+
+test("a uniform perspective keeps the globe round and bounded through a full orbit", () => {
+  const cloud = createLandingNetwork();
+  const original = structuredClone(cloud);
+  const sizes = [
+    { width: 284, height: 608, matrix: { right: 264, bottom: 256 } },
+    { width: 339, height: 608, matrix: { right: 319, bottom: 256 } },
+    { width: 760, height: 788, matrix: { right: 580, bottom: 256 } },
+    { width: 798, height: 440, matrix: { right: 311.22, bottom: 353 } },
+    { width: 920, height: 440, matrix: { right: 358.8, bottom: 360 } },
+    { width: 1180, height: 507.4, matrix: { right: 460, bottom: 390 } },
+  ];
+  for (const { width, height, matrix } of sizes) {
+    const frame = getLandingNetworkFrame(width, height, matrix);
+    const savedFrame = { ...frame };
+    assert.equal(frame.rx, frame.ry, "viewport must not stretch the mesh");
+    const x = projectLandingNetworkNode({ x: 1, y: 0, z: 0 }, frame, 0, 0);
+    const y = projectLandingNetworkNode({ x: 0, y: 1, z: 0 }, frame, 0, 0);
+    assert.ok(Math.abs(x.x - frame.cx - (y.y - frame.cy)) < 1e-9);
+    for (let turn = 0; turn <= 48; turn++) {
+      for (const pitch of [-.85, -.12, .85]) {
+        for (const node of cloud.nodes) {
+          const p = projectLandingNetworkNode(node, frame, turn * Math.PI / 24, pitch);
+          const margin = p.r * p.scale + 5; // dot plus focus ring
+          assert.ok(p.x - margin >= 0 && p.x + margin <= width, "side crop");
+          assert.ok(p.y - margin >= 0 && p.y + margin <= height, "top/bottom crop");
+          if (width < 780) assert.ok(p.y - margin > matrix.bottom + 20, "reading column overlap");
+          else assert.ok(p.x - margin > matrix.right + 12, "reading column overlap");
+        }
+      }
+    }
+    assert.deepEqual(frame, savedFrame, "rotation must not re-fit the drawing");
+  }
+  assert.deepEqual(cloud, original, "projection must not deform the source mesh");
+});
+
+test("a dot highlights only itself and directly connected neighbours without moving them", () => {
+  const cloud = createLandingNetwork(), before = structuredClone(cloud);
+  const index = 42, focus = getLandingNetworkHighlight(cloud, cloud.nodes[index].key, index);
+  const expectedEdges = new Set(), expectedNodes = new Set([index]);
+  cloud.edges.forEach(([a, b], edge) => {
+    if (a === index || b === index) { expectedEdges.add(edge); expectedNodes.add(a); expectedNodes.add(b); }
+  });
+  assert.deepEqual(focus, { nodes: expectedNodes, edges: expectedEdges });
+  assert.ok(focus.nodes.size < cloud.nodes.length / 5, "hover must stay local");
+  assert.deepEqual(cloud, before);
+});
+
+test("every label can trace its actual hub and its layer connection", () => {
+  const cloud = createLandingNetwork();
+  for (const [layer, components] of Object.entries({ interface: ["web"], services: ["api", "data"], async: ["queue", "worker"] })) {
+    for (const part of components) {
+      const connection = cloud.edges.findIndex(([a, b]) => [a, b].includes(cloud.hubs[layer]) && [a, b].includes(cloud.hubs[part]));
+      assert.ok(connection >= 0, "label relation must exist in the mesh");
+      for (const key of [part, layer]) {
+        const focus = getLandingNetworkHighlight(cloud, key);
+        assert.ok(focus.edges.has(connection));
+        assert.ok(focus.nodes.has(cloud.hubs[part]) && focus.nodes.has(cloud.hubs[layer]));
+        assert.ok(focus.nodes.size < cloud.nodes.length / 2, "labels must not flood the globe with highlights");
+      }
+    }
+  }
+  for (const key of [null, "__proto__", "constructor", "unrecognized"]) {
+    assert.deepEqual(getLandingNetworkHighlight(cloud, key), { nodes: new Set(), edges: new Set() });
+  }
+  assert.deepEqual(createLandingNetwork(), cloud, "reload must retain the same composition");
+});
+
+test("mounted hover fades paths without moving geometry or the camera, and settles when paused", (t) => {
+  const saved = new Map(), frames = new Map();
+  let nextFrame = 0, time = 100, paths = [], from = null;
+  function install(key, value) {
+    saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  t.after(() => {
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  });
+  const context = {
+    setTransform() {}, clearRect() { paths = []; }, beginPath() {}, stroke() {}, fill() {},
+    fillRect() {}, arc() {}, drawImage() {}, bezierCurveTo() {},
+    moveTo(x, y) { from = [x, y]; },
+    lineTo(x, y) { paths.push([...from, x, y]); },
+    createRadialGradient() { return { addColorStop() {} }; },
+  };
+  function element(box) {
+    const events = new Map();
+    return {
+      dataset: {}, style: {}, events,
+      classList: { toggle() {}, add() {}, remove() {} },
+      addEventListener(type, fn) { events.set(type, fn); },
+      removeEventListener() {}, setAttribute() {}, closest() { return null; },
+      getBoundingClientRect() { return box; },
+    };
+  }
+  const box = { left: 0, top: 0, right: 1180, bottom: 508, width: 1180, height: 508 };
+  const stage = element(box), canvas = element(box);
+  canvas.getContext = () => context;
+  stage.querySelector = () => canvas;
+  const ids = ["interface", "services", "async", "web", "api", "data", "queue", "worker"];
+  const rows = ids.map((id, index) => {
+    const row = element({ left: index < 3 ? 0 : 260, right: index < 3 ? 190 : 460, top: 150 + index % 5 * 46, height: 46 });
+    row.dataset.item = id;
+    return row;
+  });
+  stage.querySelectorAll = () => rows;
+  const root = {
+    dataset: {},
+    querySelector(selector) {
+      if (selector === "[data-network-stage]") return stage;
+      if (selector === ".matrix") return element({ right: 460, bottom: 390 });
+      return { textContent: "" };
+    },
+  };
+  const media = { matches: false, addEventListener() {}, removeEventListener() {} };
+  install("matchMedia", () => media);
+  install("devicePixelRatio", 1);
+  install("document", {
+    hidden: false, documentElement: { dataset: { theme: "light" } },
+    addEventListener() {}, removeEventListener() {},
+    createElement() { return { getContext: () => context }; },
+  });
+  const Observer = class { observe() {} disconnect() {} };
+  install("ResizeObserver", Observer);
+  install("MutationObserver", Observer);
+  install("IntersectionObserver", Observer);
+  install("requestAnimationFrame", fn => { frames.set(++nextFrame, fn); return nextFrame; });
+  install("cancelAnimationFrame", id => frames.delete(id));
+  function settle() {
+    for (let step = 0; frames.size && step < 120; step++) {
+      const callbacks = [...frames.values()]; frames.clear();
+      time += 16;
+      callbacks.forEach(fn => fn(time));
+    }
+    assert.equal(frames.size, 0, "paused or hovered rendering must settle");
+  }
+  const controller = mountLandingNetwork(root);
+  stage.events.get("keydown")({ key: " ", target: stage, preventDefault() {} });
+  settle();
+  const geometry = () => [...new Set(paths.map(p => JSON.stringify(p)))].sort();
+  const before = geometry();
+  const camera = { yaw: stage.dataset.yaw, pitch: stage.dataset.pitch, radius: stage.dataset.radius, width: canvas.width, height: canvas.height };
+  const frame = getLandingNetworkFrame(1180, 508, { right: 460, bottom: 390 });
+  const cloud = createLandingNetwork();
+  for (const index of [0, 42, cloud.hubs.api]) {
+    const point = projectLandingNetworkNode(cloud.nodes[index], frame, .22, -.12);
+    stage.events.get("pointermove")({ clientX: point.x, clientY: point.y, target: canvas, pointerId: 1 });
+    settle();
+    assert.ok(stage.dataset.hover, "pointer should explore a node");
+    assert.deepEqual(geometry(), before, "hover must not pull dots or tilt the view");
+    assert.deepEqual({ yaw: stage.dataset.yaw, pitch: stage.dataset.pitch, radius: stage.dataset.radius, width: canvas.width, height: canvas.height }, camera);
+  }
+  stage.events.get("pointerleave")();
+  settle();
+  assert.equal(stage.dataset.hover, "");
+  assert.deepEqual(geometry(), before);
+  controller.destroy();
 });
