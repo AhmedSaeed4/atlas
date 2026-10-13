@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame, createSceneIdleReturn, sceneHomeReturnCamera } from "../public/src/landing-scene.js";
+import { createLandingScene, createSceneLogo, createSceneEmblem, sceneEmblemFaces, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame, createSceneIdleReturn, sceneHomeReturnCamera } from "../public/src/landing-scene.js";
 
 test("the scene contains upright and horizontal world planes with independently returned geometry",()=>{
   const panels=createLandingScene();
@@ -14,6 +14,87 @@ test("the scene contains upright and horizontal world planes with independently 
   panels[0].o.x=100;
   assert.notEqual(createLandingScene()[0].o.x,100);
 });
+
+test("the rounded Atlas mark is four closed solids with outward unit normals and distinct front/back caps", () => {
+  const faces = createSceneLogo();
+  const snapshot = structuredClone(faces);
+  for (let tile = 0; tile < 4; tile++) {
+    const mesh = faces.filter(face => face.tile === tile);
+    const points = mesh.flatMap(face => face.points);
+    const center = Object.fromEntries(["x", "y", "z"].map(key => [key, (Math.min(...points.map(p => p[key])) + Math.max(...points.map(p => p[key]))) / 2]));
+    const edges = new Map();
+    const key = p => [p.x, p.y, p.z].map(n => n.toFixed(9)).join(",");
+    assert.equal(mesh.filter(face => face.cap).length, 2);
+    assert.deepEqual(mesh.filter(face => face.cap).map(face => Math.sign(face.normal[2])).sort(), [-1, 1]);
+    for (const face of mesh) {
+      assert.ok(Math.abs(Math.hypot(...face.normal) - 1) < 1e-9);
+      assert.ok(face.normal[0] * (face.center.x - center.x) + face.normal[1] * (face.center.y - center.y) + face.normal[2] * (face.center.z - center.z) > 0, "inverted normals would hide outward faces during a turn");
+      assert.equal(face.muted, tile === 1 || tile === 2);
+      face.points.forEach((point, i) => {
+        assert.ok(Object.values(point).every(Number.isFinite));
+        const a = key(point), b = key(face.points[(i + 1) % face.points.length]);
+        assert.notEqual(a, b, "no zero-length bevel edges");
+        const id = [a, b].sort().join("|");
+        const entry = edges.get(id) || [];
+        entry.push([a, b]); edges.set(id, entry);
+      });
+    }
+    for (const pair of edges.values()) {
+      assert.equal(pair.length, 2, "each edge must join exactly two faces, including both caps");
+      assert.deepEqual(pair[0], [...pair[1]].reverse(), "shared edge winding must oppose its neighbour");
+    }
+    // The complete model stays inside the already allocated logo/plinth envelope.
+    for (const p of points) {
+      assert.ok(p.x >= -.43 && p.x <= .47 && p.y >= .25 && p.y <= .95 && p.z >= .25 && p.z <= 1.05);
+    }
+  }
+  assert.deepEqual(faces, snapshot);
+  faces[0].points[0].x = 100;
+  assert.notEqual(createSceneLogo()[0].points[0].x, 100);
+});
+
+
+test("logo and platform overlaps paint the nearest real surface throughout the orbit", t => {
+  const emblem = createSceneEmblem(), original = structuredClone(emblem);
+  let samples = 0, oldCuts = 0;
+  const cameras = [{ yaw: .736, pitch: .376 }];
+  for (let step = 0; step < 32; step++) for (const pitch of [.18, .376, .6, 1.15]) cameras.push({ yaw: -Math.PI + (step + .17) * Math.PI / 16, pitch });
+  for (const camera of cameras) {
+    const faces = sceneEmblemFaces(emblem, camera);
+    const polygons = faces.map(face => face.points.map(p => projectScenePoint(p, camera)));
+    const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw), cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+    const eye = [-24 * sy * cp, 24 * sp, 24 * cy * cp];
+    // An independent ray/plane depth oracle checks what should be visible at each pixel.
+    const depthAt = (face, point) => {
+      const ray = [point.x * cy - point.y * sy * sp + 24 * sy * cp, -point.y * cp - 24 * sp, point.x * sy + point.y * cy * sp - 24 * cy * cp];
+      const center = [face.center.x, face.center.y, face.center.z];
+      const along = face.normal.reduce((sum, n, i) => sum + n * (center[i] - eye[i]), 0) / face.normal.reduce((sum, n, i) => sum + n * ray[i], 0);
+      return 24 * (1 - along);
+    };
+    const oldOrder = faces.map((face, index) => ({ index, depth: projectScenePoint(face.center, camera).depth })).sort((a, b) => a.depth - b.depth);
+    for (const face of faces.filter(face => face.cap || face.slab !== undefined)) {
+      const center = projectScenePoint(face.center, camera);
+      const probes = [center, ...face.points.map(p => {
+        const edge = projectScenePoint(p, camera);
+        return { x: center.x + (edge.x - center.x) * .82, y: center.y + (edge.y - center.y) * .82 };
+      })];
+      for (const point of probes) {
+        const hits = faces.map((candidate, index) => scenePolygonContains(point, polygons[index]) ? { index, depth: depthAt(candidate, point) } : null).filter(Boolean);
+        if (hits.length < 2) continue;
+        const nearest = Math.max(...hits.map(hit => hit.depth));
+        assert.ok(Math.abs(hits.at(-1).depth - nearest) < 1e-7, "a farther slab or tile must never cut across the nearer visible surface");
+        const oldLast = oldOrder.filter(item => hits.some(hit => hit.index === item.index)).at(-1);
+        if (Math.abs(depthAt(faces[oldLast.index], point) - nearest) > 1e-7) oldCuts++;
+        samples++;
+      }
+    }
+  }
+  assert.ok(samples > 500, "exercise actual projected overlaps, not only separate faces");
+  assert.ok(oldCuts > 20, "the same geometry must expose the former face-centroid sorting defect");
+  assert.deepEqual(emblem, original, "orbiting must never mutate the cached geometry");
+  t.diagnostic(`${samples} overlapping probes checked; former ordering clipped ${oldCuts} of them`);
+});
+
 
 test("projection uses depth and rejects points behind the camera instead of producing invalid coordinates",()=>{
   const camera={yaw:0,pitch:0};
@@ -84,6 +165,8 @@ test("one fixed expanded canvas contains the complete orbit while preserving the
   }));
   for (const x of [-.43, .47]) for (const y of [-.01, .95]) for (const z of [.25, 1.05]) points.push({ x, y, z });
   for (const x of [-.42, .56]) for (const z of [.32, 1.16]) points.push({ x, y: -.09, z });
+  const logoVertices = new Map(createSceneLogo().flatMap(face => face.points).map(p => [JSON.stringify(p), p]));
+  points.push(...logoVertices.values());
   const original = panels.flatMap(corners).map(p => projectScenePoint(p, home));
   const minX = Math.min(...original.map(p => p.x)), maxX = Math.max(...original.map(p => p.x));
   const minY = Math.min(...original.map(p => p.y)), maxY = Math.max(...original.map(p => p.y));
