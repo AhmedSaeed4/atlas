@@ -34,6 +34,69 @@ export function projectScenePoint(point, camera = HOME) {
   return { x: x * perspective, y: -y * perspective, depth, perspective };
 }
 
+const sceneCorners = panel => [[0, 0], [panel.w, 0], [panel.w, panel.h], [0, panel.h]].map(([x, y]) => ({
+  x: panel.o.x + panel.u.x * x + panel.v.x * y,
+  y: panel.o.y + panel.u.y * x + panel.v.y * y,
+  z: panel.o.z + panel.u.z * x + panel.v.z * y
+}));
+
+function sceneOuterPoints() {
+  const points = [];
+  for (const panel of createLandingScene()) for (const p of sceneCorners(panel)) {
+    const back = { ...p, y: p.y - (panel.v.z ? .037 : 0), z: p.z - (panel.v.y ? .037 : 0) };
+    points.push(p, back, { ...p, y: p.y + .075 }, { ...back, y: back.y + .075 });
+    if (panel.v.z) points.push({ x: p.x + .08, y: -.087, z: p.z + .07 });
+  }
+  for (const x of [-.43, .47]) for (const y of [-.01, .95]) for (const z of [.25, 1.05]) points.push({ x, y, z });
+  for (const x of [-.42, .56]) for (const z of [.32, 1.16]) points.push({ x, y: -.09, z });
+  return points;
+}
+
+// Exact orbit extrema are computed once. Rotation never changes the viewport.
+function sceneOrbitBounds() {
+  const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+  for (const point of sceneOuterPoints()) {
+    const radial = Math.hypot(point.x, point.z), radius2 = radial * radial + point.y * point.y;
+    const sine = clamp(24 * point.y / radius2, Math.sin(.18), Math.sin(1.15));
+    const reach = 24 * radial / Math.sqrt((24 - point.y * sine) ** 2 - radial * radial * (1 - sine * sine));
+    bounds.minX = Math.min(bounds.minX, -reach); bounds.maxX = Math.max(bounds.maxX, reach);
+    for (const z of [-radial, radial]) {
+      const angle = Math.atan2(point.y, z), turn = Math.acos(Math.sqrt(radius2) / 24);
+      for (const pitch of [.18, 1.15, angle - turn, angle + turn]) {
+        if (pitch < .18 || pitch > 1.15) continue;
+        const p = projectScenePoint({ x: 0, y: point.y, z }, { yaw: 0, pitch });
+        bounds.minY = Math.min(bounds.minY, p.y); bounds.maxY = Math.max(bounds.maxY, p.y);
+      }
+    }
+  }
+  return bounds;
+}
+const SCENE_ORBIT_BOUNDS = sceneOrbitBounds();
+const SCENE_HOME_POINTS = createLandingScene().flatMap(sceneCorners).map(p => projectScenePoint(p, HOME));
+const SCENE_HOME_BOUNDS = {
+  minX: Math.min(...SCENE_HOME_POINTS.map(p => p.x)), maxX: Math.max(...SCENE_HOME_POINTS.map(p => p.x)),
+  minY: Math.min(...SCENE_HOME_POINTS.map(p => p.y)), maxY: Math.max(...SCENE_HOME_POINTS.map(p => p.y))
+};
+
+export function sceneCanvasFrame(width, height, viewportWidth, stageLeft) {
+  if (![width, height, viewportWidth, stageLeft].every(Number.isFinite) || width <= 28 || height <= 38 || viewportWidth <= 8) return null;
+  const home = SCENE_HOME_BOUNDS, orbit = SCENE_ORBIT_BOUNDS;
+  const originalScale = Math.max(1, Math.min((width - 28) / (home.maxX - home.minX), (height - 38) / (home.maxY - home.minY)));
+  // Only the initial responsive layout may constrain size on a very narrow screen.
+  const scale = Math.min(originalScale, (viewportWidth - 8) / (orbit.maxX - orbit.minX));
+  const preferredX = width / 2 - (home.minX + home.maxX) * scale / 2;
+  const centerX = clamp(stageLeft + preferredX, 4 - orbit.minX * scale, viewportWidth - 4 - orbit.maxX * scale) - stageLeft;
+  const centerY = height / 2 - (home.minY + home.maxY) * scale / 2;
+  const room = {
+    left: Math.max(0, Math.ceil(20 - centerX - orbit.minX * scale)),
+    right: Math.max(0, Math.ceil(centerX + orbit.maxX * scale + 20 - width)),
+    top: Math.max(0, Math.ceil(20 - centerY - orbit.minY * scale)),
+    bottom: Math.max(0, Math.ceil(centerY + orbit.maxY * scale + 20 - height))
+  };
+  return { scale, room, width: width + room.left + room.right, height: height + room.top + room.bottom,
+    offset: { x: centerX + room.left, y: centerY + room.top } };
+}
+
 export function orbitSceneCamera(camera, dx, dy) {
   if (![camera?.yaw, camera?.pitch, dx, dy].every(Number.isFinite)) return { ...HOME };
   const yaw = camera.yaw + clamp(dx, -1000, 1000) * .006;
@@ -66,6 +129,7 @@ export function mountLandingScene(root) {
   if (!ctx) return;
   root.dataset.mounted = "true";
   const stage = root.querySelector(".scene-stage");
+  const hero = root.closest(".hero");
   const caption = root.querySelector("[data-scene-label]");
   const panels = createLandingScene();
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -73,6 +137,7 @@ export function mountLandingScene(root) {
   let w = 0, h = 0, dpr = 1, scale = 1, offset = { x: 0, y: 0 }, palette = {}, raf = 0, visible = true;
   let base = { ...HOME }, current = { ...HOME }, hover = { x: 0, y: 0 }, active = null, hits = [], gesture = null;
   let lastFrame = 0, pulseStart = -Infinity, now = 0;
+  let stageWidth = 0, stageHeight = 0, drawingRoom = { left: 0, top: 0 };
   const pointOn = (panel, x, y) => ({ x: panel.o.x + panel.u.x * x + panel.v.x * y, y: panel.o.y + panel.u.y * x + panel.v.y * y, z: panel.o.z + panel.u.z * x + panel.v.z * y });
   const corners = panel => [[0, 0], [panel.w, 0], [panel.w, panel.h], [0, panel.h]].map(([x, y]) => pointOn(panel, x, y));
   const screen = point => {
@@ -305,7 +370,16 @@ export function mountLandingScene(root) {
   }
   function requestFrame() { if (!raf && visible && !document.hidden) raf = requestAnimationFrame(frame); }
   function resize() {
-    const rect = canvas.getBoundingClientRect(); w = rect.width; h = rect.height; dpr = Math.min(2, window.devicePixelRatio || 1);
+    const rect = stage.getBoundingClientRect();
+    const frame = sceneCanvasFrame(rect.width, rect.height, document.documentElement.clientWidth, rect.left);
+    if (!frame) return;
+    stageWidth = rect.width; stageHeight = rect.height; drawingRoom = frame.room;
+    w = frame.width; h = frame.height; scale = frame.scale; offset = frame.offset;
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.style.left = -drawingRoom.left + "px"; canvas.style.top = -drawingRoom.top + "px";
+    canvas.style.width = w + "px"; canvas.style.height = h + "px";
+    hero?.style.setProperty("--scene-room-bottom", drawingRoom.bottom + "px");
+    hero?.style.setProperty("--scene-room-top", drawingRoom.top + "px");
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
     const styles = getComputedStyle(root);
     const color = name => styles.getPropertyValue(name).trim();
@@ -315,10 +389,7 @@ export function mountLandingScene(root) {
       inset: color("--scene-inset"), softAccent: color("--scene-soft-accent"), accentInk: color("--scene-accent-ink"),
       accentSide: color("--scene-accent-side"), accentTop: color("--scene-accent-top"), shadow: color("--scene-shadow")
     };
-    const boundary = panels.flatMap(corners).map(p => projectScenePoint(p, HOME));
-    const minX = Math.min(...boundary.map(p => p.x)), maxX = Math.max(...boundary.map(p => p.x)), minY = Math.min(...boundary.map(p => p.y)), maxY = Math.max(...boundary.map(p => p.y));
-    scale = Math.max(1, Math.min((w - 28) / (maxX - minX), (h - 38) / (maxY - minY)));
-    offset = { x: w / 2 - (minX + maxX) * scale / 2, y: h / 2 - (minY + maxY) * scale / 2 };
+
     render(); requestFrame();
   }
   const pointer = event => { const r = canvas.getBoundingClientRect(); return { x: event.clientX - r.left, y: event.clientY - r.top }; };
@@ -337,7 +408,7 @@ export function mountLandingScene(root) {
     }
     if (event.pointerType === "touch") return;
     setActive([...hits].reverse().find(hit => scenePolygonContains(p, hit.polygon))?.id || null);
-    hover = reduced.matches ? { x: 0, y: 0 } : { x: (p.x / w - .5) * .11, y: (p.y / h - .5) * .075 };
+    hover = reduced.matches ? { x: 0, y: 0 } : { x: clamp((p.x - drawingRoom.left) / stageWidth - .5, -.5, .5) * .11, y: clamp((p.y - drawingRoom.top) / stageHeight - .5, -.5, .5) * .075 };
     requestFrame();
   });
   canvas.addEventListener("pointerdown", event => {
@@ -365,13 +436,13 @@ export function mountLandingScene(root) {
       event.preventDefault(); base = { ...HOME }; hover = { x: 0, y: 0 }; setActive(null); requestFrame();
     }
   });
-  new ResizeObserver(resize).observe(canvas);
+  new ResizeObserver(resize).observe(stage);
   new MutationObserver(resize).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   function stopFrame() { if (raf) cancelAnimationFrame(raf); raf = 0; lastFrame = 0; }
   new IntersectionObserver(entries => {
     visible = entries.some(entry => entry.isIntersecting);
     if (!visible) stopFrame(); else requestFrame();
-  }).observe(root);
+  }).observe(canvas);
   document.addEventListener("visibilitychange", () => { if (document.hidden) stopFrame(); else requestFrame(); });
   reduced.addEventListener("change", () => { hover = { x: 0, y: 0 }; pulseStart = -Infinity; requestFrame(); });
   caption.textContent = DEFAULT_LABEL;

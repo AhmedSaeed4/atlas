@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep } from "../public/src/landing-scene.js";
+import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame } from "../public/src/landing-scene.js";
 
 test("the scene contains upright and horizontal world planes with independently returned geometry",()=>{
   const panels=createLandingScene();
@@ -69,4 +69,53 @@ test("camera damping has the same timing on 30, 60 and 120 Hz displays and bound
     assert.ok(Number.isFinite(sceneMotionStep(elapsed)));
     assert.ok(sceneMotionStep(elapsed) >= 0 && sceneMotionStep(elapsed) < 1);
   }
+});
+
+test("one fixed expanded canvas contains the complete orbit while preserving the original desktop size and center", () => {
+  const panels = createLandingScene(), home = { yaw: -.8, pitch: .6 };
+  const corners = panel => [[0, 0], [panel.w, 0], [panel.w, panel.h], [0, panel.h]].map(([x, y]) => ({
+    x: panel.o.x + panel.u.x * x + panel.v.x * y,
+    y: panel.o.y + panel.u.y * x + panel.v.y * y,
+    z: panel.o.z + panel.u.z * x + panel.v.z * y
+  }));
+  const points = panels.flatMap(panel => corners(panel).flatMap(p => {
+    const back = { ...p, y: p.y - (panel.v.z ? .037 : 0), z: p.z - (panel.v.y ? .037 : 0) };
+    return [p, back, { ...p, y: p.y + .075 }, { ...back, y: back.y + .075 }, ...(panel.v.z ? [{ x: p.x + .08, y: -.087, z: p.z + .07 }] : [])];
+  }));
+  for (const x of [-.43, .47]) for (const y of [-.01, .95]) for (const z of [.25, 1.05]) points.push({ x, y, z });
+  for (const x of [-.42, .56]) for (const z of [.32, 1.16]) points.push({ x, y: -.09, z });
+  const original = panels.flatMap(corners).map(p => projectScenePoint(p, home));
+  const minX = Math.min(...original.map(p => p.x)), maxX = Math.max(...original.map(p => p.x));
+  const minY = Math.min(...original.map(p => p.y)), maxY = Math.max(...original.map(p => p.y));
+  let formerBottomCrop = false, formerSideCrop = false;
+  for (const [width, height, viewport, left] of [[352.328125, 405, 977, 561.171875], [423.8, 410.8, 1012, 556.2], [527, 512, 1265, 690], [339, 335, 375, 18], [284, 320, 305, 18]]) {
+    const frame = sceneCanvasFrame(width, height, viewport, left);
+    const stable = structuredClone(frame);
+    const originalScale = Math.max(1, Math.min((width - 28) / (maxX - minX), (height - 38) / (maxY - minY)));
+    const originalOffset = { x: width / 2 - (minX + maxX) * originalScale / 2, y: height / 2 - (minY + maxY) * originalScale / 2 };
+    if (viewport >= 375) assert.equal(frame.scale, originalScale, "normal desktop and phone size must remain unchanged");
+    if (viewport > 850) {
+      assert.ok(Math.abs(frame.offset.x - frame.room.left - originalOffset.x) < 1e-9);
+      assert.ok(Math.abs(frame.offset.y - frame.room.top - originalOffset.y) < 1e-9);
+    }
+    assert.ok(frame.width > width && frame.height > height, "the drawing area must expand rather than refit while turning");
+    // The same frame is used for every angle, including fractional sample angles.
+    for (let step = 0; step <= 144; step++) for (const pitch of [.18, .273, .409, .6, .819, .97, 1.15]) {
+      const camera = { yaw: -Math.PI + (step + .37) * Math.PI / 72, pitch };
+      for (const point of points) {
+        const p = projectScenePoint(point, camera);
+        const x = frame.offset.x + p.x * frame.scale, y = frame.offset.y + p.y * frame.scale;
+        assert.ok(x >= 20 - 1e-8 && x <= frame.width - 20 + 1e-8, "fixed canvas side gutter");
+        assert.ok(y >= 20 - 1e-8 && y <= frame.height - 20 + 1e-8, "fixed canvas vertical gutter");
+        const pageX = left - frame.room.left + x;
+        assert.ok(pageX >= 4 - 1e-8 && pageX <= viewport - 4 + 1e-8, "even a narrow screen must show the outer corners");
+        const oldX = originalOffset.x + p.x * originalScale, oldY = originalOffset.y + p.y * originalScale;
+        formerSideCrop ||= oldX < 0 || oldX > width;
+        formerBottomCrop ||= oldY > height;
+      }
+    }
+    assert.deepEqual(frame, stable);
+    assert.deepEqual(sceneCanvasFrame(width, height, viewport, left), stable);
+  }
+  assert.ok(formerBottomCrop && formerSideCrop, "the sweep must reproduce both old edge crops");
 });
