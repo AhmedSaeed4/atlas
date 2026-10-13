@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLandingScene, createSceneLogo, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame, createSceneIdleReturn, sceneHomeReturnCamera } from "../public/src/landing-scene.js";
+import { createLandingScene, createSceneLogo, createSceneEmblem, sceneEmblemFaces, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame, createSceneIdleReturn, sceneHomeReturnCamera } from "../public/src/landing-scene.js";
 
 test("the scene contains upright and horizontal world planes with independently returned geometry",()=>{
   const panels=createLandingScene();
@@ -51,6 +51,48 @@ test("the rounded Atlas mark is four closed solids with outward unit normals and
   assert.deepEqual(faces, snapshot);
   faces[0].points[0].x = 100;
   assert.notEqual(createSceneLogo()[0].points[0].x, 100);
+});
+
+
+test("logo and platform overlaps paint the nearest real surface throughout the orbit", t => {
+  const emblem = createSceneEmblem(), original = structuredClone(emblem);
+  let samples = 0, oldCuts = 0;
+  const cameras = [{ yaw: .736, pitch: .376 }];
+  for (let step = 0; step < 32; step++) for (const pitch of [.18, .376, .6, 1.15]) cameras.push({ yaw: -Math.PI + (step + .17) * Math.PI / 16, pitch });
+  for (const camera of cameras) {
+    const faces = sceneEmblemFaces(emblem, camera);
+    const polygons = faces.map(face => face.points.map(p => projectScenePoint(p, camera)));
+    const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw), cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
+    const eye = [-24 * sy * cp, 24 * sp, 24 * cy * cp];
+    // An independent ray/plane depth oracle checks what should be visible at each pixel.
+    const depthAt = (face, point) => {
+      const ray = [point.x * cy - point.y * sy * sp + 24 * sy * cp, -point.y * cp - 24 * sp, point.x * sy + point.y * cy * sp - 24 * cy * cp];
+      const center = [face.center.x, face.center.y, face.center.z];
+      const along = face.normal.reduce((sum, n, i) => sum + n * (center[i] - eye[i]), 0) / face.normal.reduce((sum, n, i) => sum + n * ray[i], 0);
+      return 24 * (1 - along);
+    };
+    const oldOrder = faces.map((face, index) => ({ index, depth: projectScenePoint(face.center, camera).depth })).sort((a, b) => a.depth - b.depth);
+    for (const face of faces.filter(face => face.cap || face.slab !== undefined)) {
+      const center = projectScenePoint(face.center, camera);
+      const probes = [center, ...face.points.map(p => {
+        const edge = projectScenePoint(p, camera);
+        return { x: center.x + (edge.x - center.x) * .82, y: center.y + (edge.y - center.y) * .82 };
+      })];
+      for (const point of probes) {
+        const hits = faces.map((candidate, index) => scenePolygonContains(point, polygons[index]) ? { index, depth: depthAt(candidate, point) } : null).filter(Boolean);
+        if (hits.length < 2) continue;
+        const nearest = Math.max(...hits.map(hit => hit.depth));
+        assert.ok(Math.abs(hits.at(-1).depth - nearest) < 1e-7, "a farther slab or tile must never cut across the nearer visible surface");
+        const oldLast = oldOrder.filter(item => hits.some(hit => hit.index === item.index)).at(-1);
+        if (Math.abs(depthAt(faces[oldLast.index], point) - nearest) > 1e-7) oldCuts++;
+        samples++;
+      }
+    }
+  }
+  assert.ok(samples > 500, "exercise actual projected overlaps, not only separate faces");
+  assert.ok(oldCuts > 20, "the same geometry must expose the former face-centroid sorting defect");
+  assert.deepEqual(emblem, original, "orbiting must never mutate the cached geometry");
+  t.diagnostic(`${samples} overlapping probes checked; former ordering clipped ${oldCuts} of them`);
 });
 
 
