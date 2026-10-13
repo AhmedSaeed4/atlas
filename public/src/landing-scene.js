@@ -22,6 +22,44 @@ export function createLandingScene() {
   ];
 }
 
+/** Four rounded tiles using the header mark's 8:3 spacing/radius and -8deg tilt. */
+export function createSceneLogo() {
+  const size = .255, gap = size * 3 / 8, radius = size * 3 / 8;
+  const depth = .14, bevel = .012, angle = 8 * Math.PI / 180;
+  const cos = Math.cos(angle), sin = Math.sin(angle), faces = [];
+  function addFace(points, tile, cap = false) {
+    const a = points[0], b = points[1], c = points[2];
+    const u = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+    const v = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+    const cross = [u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x];
+    const length = Math.hypot(...cross);
+    const center = Object.fromEntries(["x", "y", "z"].map(key => [key, points.reduce((sum, p) => sum + p[key], 0) / points.length]));
+    faces.push({ points, normal: cross.map(n => n / length), center, tile, muted: tile === 1 || tile === 2, cap });
+  }
+  for (let row = 0; row < 2; row++) for (let col = 0; col < 2; col++) {
+    const tile = row * 2 + col, cx = (col - .5) * (size + gap), cy = (.5 - row) * (size + gap);
+    const ring = (z, inset) => {
+      const half = size / 2 - inset, r = radius - inset, points = [];
+      for (const [x, y, start] of [[half - r, half - r, 0], [-half + r, half - r, Math.PI / 2], [-half + r, -half + r, Math.PI], [half - r, -half + r, Math.PI * 1.5]]) {
+        for (let i = 0; i <= 5; i++) {
+          const a = start + i * Math.PI / 10;
+          const px = cx + x + r * Math.cos(a), py = cy + y + r * Math.sin(a);
+          points.push({ x: .015 + px * cos - py * sin, y: .61 + px * sin + py * cos, z: .61 + z });
+        }
+      }
+      return points;
+    };
+    const rings = [ring(-depth / 2, bevel), ring(-depth / 2 + bevel, 0), ring(depth / 2 - bevel, 0), ring(depth / 2, bevel)];
+    addFace([...rings[0]].reverse(), tile, true);
+    addFace(rings[3], tile, true);
+    for (let band = 0; band < rings.length - 1; band++) for (let i = 0; i < rings[band].length; i++) {
+      const next = (i + 1) % rings[band].length;
+      addFace([rings[band][i], rings[band][next], rings[band + 1][next], rings[band + 1][i]], tile);
+    }
+  }
+  return faces;
+}
+
 export function projectScenePoint(point, camera = HOME) {
   if (!point || ![point.x, point.y, point.z, camera.yaw, camera.pitch].every(Number.isFinite)) return null;
   const cy = Math.cos(camera.yaw), sy = Math.sin(camera.yaw), cp = Math.cos(camera.pitch), sp = Math.sin(camera.pitch);
@@ -167,6 +205,8 @@ export function mountLandingScene(root) {
   const hero = root.closest(".hero");
   const caption = root.querySelector("[data-scene-label]");
   const panels = createLandingScene();
+  // Build rounded geometry once; rotation only projects/culls the small cached mesh.
+  const logo = createSceneLogo();
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
   const lifts = Object.fromEntries(panels.map(panel => [panel.id, 0]));
   let w = 0, h = 0, dpr = 1, scale = 1, offset = { x: 0, y: 0 }, palette = {}, raf = 0, visible = true;
@@ -338,11 +378,9 @@ export function mountLandingScene(root) {
     }
   }
 
-  function cube(x, y, z, cw, ch, cd, accent = false) {
+  function cube(x, y, z, cw, ch, cd) {
     const p = (dx, dy, dz) => ({ x: x + dx, y: y + dy, z: z + dz });
-    const front = accent ? palette.accent : palette.paper;
-    const side = accent ? palette.accentSide : palette.edge;
-    const top = accent ? palette.accentTop : palette.paper;
+    const front = palette.paper, side = palette.edge, top = palette.paper;
     return [
       { points: [p(0, 0, cd), p(cw, 0, cd), p(cw, ch, cd), p(0, ch, cd)], normal: [0, 0, 1], fill: front },
       { points: [p(cw, 0, 0), p(0, 0, 0), p(0, ch, 0), p(cw, ch, 0)], normal: [0, 0, -1], fill: front },
@@ -387,11 +425,17 @@ export function mountLandingScene(root) {
       depth: panel.v.y ? projectScenePoint({ x: 0, y: 0, z: panel.o.z }, current).depth : corners(panel).reduce((sum, p) => sum + projectScenePoint(p, current).depth, 0) / 4
     }));
     const faces = [...cube(-.43, -.01, .25, .90, .09, .80), ...cube(-.43, .14, .25, .90, .11, .80)];
-    for (let row = 0; row < 2; row++) for (let col = 0; col < 2; col++) faces.push(...cube(-.30 + col * .35, .32 + row * .35, .53, .28, .28, .16, true));
-    faces.forEach(face => objects.push({ ...face, depth: face.points.reduce((sum, p) => sum + projectScenePoint(p, current).depth, 0) / 4 }));
+    const eye = { x: -24 * Math.sin(current.yaw) * Math.cos(current.pitch), y: 24 * Math.sin(current.pitch), z: 24 * Math.cos(current.yaw) * Math.cos(current.pitch) };
+    const visibleLogo = logo.filter(face => face.normal[0] * (eye.x - face.center.x) + face.normal[1] * (eye.y - face.center.y) + face.normal[2] * (eye.z - face.center.z) > 0);
+    faces.forEach(face => objects.push({ ...face, depth: face.points.reduce((sum, p) => sum + projectScenePoint(p, current).depth, 0) / face.points.length }));
+    visibleLogo.forEach(face => objects.push({ ...face, depth: projectScenePoint(face.center, current).depth }));
     objects.sort((a, b) => a.depth - b.depth).forEach(object => {
       if (object.panel) {
         drawPanel(object.panel); hits.push({ id: object.panel.id, polygon: corners(object.panel).map(screen) });
+      } else if (object.tile !== undefined) {
+        // Matching edge paint closes antialias seams without outlining every bevel facet.
+        line(object.points, object.fill, 1, .5, true, object.fill);
+        if (object.cap) line(object.points, palette.accentInk, .28, .55, true);
       } else line(object.points, palette.ink, .52, .7, true, object.fill);
     });
     root.dataset.yaw = current.yaw.toFixed(3); root.dataset.pitch = current.pitch.toFixed(3); root.dataset.active = active || "";
@@ -445,8 +489,15 @@ export function mountLandingScene(root) {
       ink: color("--landing-ink"), quiet: color("--landing-quiet"), accent: color("--landing-accent"),
       paper: color("--scene-paper"), paperShade: color("--scene-paper-shade"), edge: color("--scene-edge"),
       inset: color("--scene-inset"), softAccent: color("--scene-soft-accent"), accentInk: color("--scene-accent-ink"),
-      accentSide: color("--scene-accent-side"), accentTop: color("--scene-accent-top"), shadow: color("--scene-shadow")
+      logoMuted: color("--scene-logo-muted"), shadow: color("--scene-shadow")
     };
+    for (const face of logo) {
+      const base = face.muted ? palette.logoMuted : palette.accent;
+      const light = face.normal[0] * -.45 + face.normal[1] * .70 + face.normal[2] * .55;
+      const amount = face.cap ? (light > 0 ? 0 : 12) : Math.min(44, Math.abs(light - .35) * 36 + 7);
+      const tint = light > .35 ? "#fafbdd" : "#48512c";
+      face.fill = amount ? `color-mix(in srgb, ${base}, ${tint} ${amount.toFixed(1)}%)` : base;
+    }
 
     render(); requestFrame();
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame, createSceneIdleReturn, sceneHomeReturnCamera } from "../public/src/landing-scene.js";
+import { createLandingScene, createSceneLogo, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep, sceneCanvasFrame, createSceneIdleReturn, sceneHomeReturnCamera } from "../public/src/landing-scene.js";
 
 test("the scene contains upright and horizontal world planes with independently returned geometry",()=>{
   const panels=createLandingScene();
@@ -14,6 +14,45 @@ test("the scene contains upright and horizontal world planes with independently 
   panels[0].o.x=100;
   assert.notEqual(createLandingScene()[0].o.x,100);
 });
+
+test("the rounded Atlas mark is four closed solids with outward unit normals and distinct front/back caps", () => {
+  const faces = createSceneLogo();
+  const snapshot = structuredClone(faces);
+  for (let tile = 0; tile < 4; tile++) {
+    const mesh = faces.filter(face => face.tile === tile);
+    const points = mesh.flatMap(face => face.points);
+    const center = Object.fromEntries(["x", "y", "z"].map(key => [key, (Math.min(...points.map(p => p[key])) + Math.max(...points.map(p => p[key]))) / 2]));
+    const edges = new Map();
+    const key = p => [p.x, p.y, p.z].map(n => n.toFixed(9)).join(",");
+    assert.equal(mesh.filter(face => face.cap).length, 2);
+    assert.deepEqual(mesh.filter(face => face.cap).map(face => Math.sign(face.normal[2])).sort(), [-1, 1]);
+    for (const face of mesh) {
+      assert.ok(Math.abs(Math.hypot(...face.normal) - 1) < 1e-9);
+      assert.ok(face.normal[0] * (face.center.x - center.x) + face.normal[1] * (face.center.y - center.y) + face.normal[2] * (face.center.z - center.z) > 0, "inverted normals would hide outward faces during a turn");
+      assert.equal(face.muted, tile === 1 || tile === 2);
+      face.points.forEach((point, i) => {
+        assert.ok(Object.values(point).every(Number.isFinite));
+        const a = key(point), b = key(face.points[(i + 1) % face.points.length]);
+        assert.notEqual(a, b, "no zero-length bevel edges");
+        const id = [a, b].sort().join("|");
+        const entry = edges.get(id) || [];
+        entry.push([a, b]); edges.set(id, entry);
+      });
+    }
+    for (const pair of edges.values()) {
+      assert.equal(pair.length, 2, "each edge must join exactly two faces, including both caps");
+      assert.deepEqual(pair[0], [...pair[1]].reverse(), "shared edge winding must oppose its neighbour");
+    }
+    // The complete model stays inside the already allocated logo/plinth envelope.
+    for (const p of points) {
+      assert.ok(p.x >= -.43 && p.x <= .47 && p.y >= .25 && p.y <= .95 && p.z >= .25 && p.z <= 1.05);
+    }
+  }
+  assert.deepEqual(faces, snapshot);
+  faces[0].points[0].x = 100;
+  assert.notEqual(createSceneLogo()[0].points[0].x, 100);
+});
+
 
 test("projection uses depth and rejects points behind the camera instead of producing invalid coordinates",()=>{
   const camera={yaw:0,pitch:0};
@@ -84,6 +123,8 @@ test("one fixed expanded canvas contains the complete orbit while preserving the
   }));
   for (const x of [-.43, .47]) for (const y of [-.01, .95]) for (const z of [.25, 1.05]) points.push({ x, y, z });
   for (const x of [-.42, .56]) for (const z of [.32, 1.16]) points.push({ x, y: -.09, z });
+  const logoVertices = new Map(createSceneLogo().flatMap(face => face.points).map(p => [JSON.stringify(p), p]));
+  points.push(...logoVertices.values());
   const original = panels.flatMap(corners).map(p => projectScenePoint(p, home));
   const minX = Math.min(...original.map(p => p.x)), maxX = Math.max(...original.map(p => p.x));
   const minY = Math.min(...original.map(p => p.y)), maxY = Math.max(...original.map(p => p.y));
