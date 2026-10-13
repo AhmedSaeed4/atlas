@@ -4,7 +4,7 @@ Atlas is a static website built with HTML, CSS and JavaScript modules. Local mod
 
 ## Files
 
-- public/index.html, public/landing.css and public/src/landing.js provide the landing page and illustrative graph preview.
+- public/index.html, public/landing.css and public/src/landing.js provide the landing page, existing introduction, account panel and prompt flow. public/landing-network.css and public/src/landing-network.js contain its scoped fictional 3D point-network illustration, relationship model and canvas camera controls; they do not access saved maps. public/landing-scene.css and public/src/landing-scene.js provide the introduction's unboxed projected 3D software-window illustration, camera math, pointer hit testing and interactive orbit. It uses no owner data.
 - public/workspace.html, public/styles.css, public/theme.css and public/src/app.js provide the interactive workspace.
 - public/src/schema.js validates imported maps and normalizes supported fields.
 - public/src/layout.js and geometry.js compute node arrangements and connector geometry.

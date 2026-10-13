@@ -1,3 +1,5 @@
+import { mountLandingScene } from "./landing-scene.js";
+import { mountLandingNetwork } from "./landing-network.js";
 import { workspaceBaseUrl } from "./routing.js";
 import { buildAgentPrompt } from "./prompt.js";
 import { getSharedAccountSession } from "./account-session.js";
@@ -20,100 +22,6 @@ export function isLocalViewerUrl(inputUrl) {
   if (url.protocol !== "http:" && url.protocol !== "https:") return true;
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   return host === "localhost" || host.endsWith(".localhost") || host === "127.0.0.1" || host === "::1";
-}
-
-export function getPreviewNodeDetails(node) {
-  const data = node?.dataset;
-  if (!data) return null;
-  return {
-    title: String(data.title || ""),
-    kind: String(data.kind || ""),
-    description: String(data.description || ""),
-  };
-}
-
-function getPreviewNode(target) {
-  return target && typeof target.closest === "function"
-    ? target.closest("[data-preview-node]")
-    : null;
-}
-
-function bindPreview() {
-  const preview = document.getElementById("architecture-preview");
-  if (!preview) return;
-  const nodes = Array.from(preview.querySelectorAll("[data-preview-node]"));
-  const title = document.getElementById("preview-detail-title");
-  const kind = document.getElementById("preview-detail-kind");
-  const description = document.getElementById("preview-description");
-  const initial = document.getElementById("preview-detail-initial");
-  if (!title || !kind || !description || !initial) return;
-
-  let selectedNode = nodes.find((node) => node.getAttribute("aria-pressed") === "true") || nodes[0] || null;
-  let hoveredNode = null;
-  let focusedNode = null;
-
-  function renderDetails() {
-    const source = focusedNode || hoveredNode || selectedNode;
-    const details = getPreviewNodeDetails(source);
-    if (!details) return;
-    title.textContent = details.title;
-    kind.textContent = details.kind;
-    description.textContent = details.description;
-    initial.textContent = Array.from(details.title.trim())[0]?.toUpperCase() || "•";
-  }
-
-  function selectNode(node) {
-    if (!node) return;
-    selectedNode = node;
-    for (const item of nodes) {
-      const selected = item === selectedNode;
-      item.setAttribute("aria-pressed", String(selected));
-      item.classList.toggle("is-selected", selected);
-    }
-    renderDetails();
-  }
-
-  preview.addEventListener("pointerover", (event) => {
-    const node = getPreviewNode(event.target);
-    if (!node || node.contains(event.relatedTarget)) return;
-    hoveredNode = node;
-    renderDetails();
-  });
-
-  preview.addEventListener("pointerout", (event) => {
-    const node = getPreviewNode(event.target);
-    if (!node || node.contains(event.relatedTarget)) return;
-    if (hoveredNode === node) hoveredNode = null;
-    renderDetails();
-  });
-
-  preview.addEventListener("focusin", (event) => {
-    const node = getPreviewNode(event.target);
-    if (!node) return;
-    focusedNode = node;
-    renderDetails();
-  });
-
-  preview.addEventListener("focusout", (event) => {
-    const node = getPreviewNode(event.target);
-    if (!node || node.contains(event.relatedTarget)) return;
-    if (focusedNode === node) focusedNode = null;
-    renderDetails();
-  });
-
-  preview.addEventListener("click", (event) => {
-    const node = getPreviewNode(event.target);
-    if (node) selectNode(node);
-  });
-
-  preview.addEventListener("keydown", (event) => {
-    const node = getPreviewNode(event.target);
-    if (!node || (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar")) return;
-    event.preventDefault();
-    selectNode(node);
-  });
-
-  renderDetails();
 }
 
 function bindPromptCopy() {
@@ -179,7 +87,8 @@ function initializeLanding() {
     window.location.replace(redirect);
     return;
   }
-  bindPreview();
+  mountLandingNetwork(document.querySelector("[data-landing-network]"));
+  mountLandingScene(document.querySelector("[data-landing-scene]"));
   bindPromptCopy();
   const account = getSharedAccountSession();
   initAccountPanel({ root: document, account });

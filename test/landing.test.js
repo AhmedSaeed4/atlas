@@ -3,7 +3,6 @@ import test from "node:test";
 import { buildAgentPrompt } from "../public/src/prompt.js";
 import {
   getLegacyShareRedirect,
-  getPreviewNodeDetails,
   getWorkspaceBaseUrl,
   isLocalViewerUrl,
 } from "../public/src/landing.js";
@@ -64,15 +63,4 @@ test("local viewer detection distinguishes development hosts and non-web origins
   assert.equal(isLocalViewerUrl("http://[::1]:4173/workspace"), true);
   assert.equal(isLocalViewerUrl("file:///D:/atlas/index.html"), true);
   assert.equal(isLocalViewerUrl("https://atlas.example/workspace"), false);
-});
-
-test("preview labels stay plain text values for safe textContent rendering", () => {
-  const description = "<img src=x onerror=alert(1)>";
-  assert.deepEqual(
-    getPreviewNodeDetails({
-      dataset: { title: "<b>Data store</b>", kind: "STORAGE", description },
-    }),
-    { title: "<b>Data store</b>", kind: "STORAGE", description },
-  );
-  assert.equal(getPreviewNodeDetails(null), null);
 });

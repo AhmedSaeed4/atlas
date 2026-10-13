@@ -12,6 +12,8 @@
     <script src="./src/theme.js"></script>
     <link rel="stylesheet" href="./theme.css">
     <link rel="stylesheet" href="./landing.css">
+    <link rel="stylesheet" href="./landing-network.css">
+    <link rel="stylesheet" href="./landing-scene.css">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -58,79 +60,46 @@
               <li><span class="fact-dot"></span>No account needed</li>
             </ul>
           </div>
+          <div class="landing-scene" data-landing-scene>
+            <div class="scene-stage" tabindex="0" role="group" aria-label="Interactive 3D illustration of connected software windows around the Atlas mark" aria-describedby="scene-gesture-guide" aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Escape 0">
+              <canvas aria-hidden="true"></canvas>
+            </div>
+            <p class="scene-caption" id="scene-gesture-guide"><span data-scene-label>One system. Many connected views.</span><span>Hover to explore &middot; Drag to turn &middot; Arrows to rotate</span></p>
+          </div>
+        </section>
 
-          <div class="preview-card" aria-labelledby="preview-heading">
-            <div class="preview-card-head">
-              <div>
-                <p class="preview-kicker">A MAP YOU CAN EXPLORE</p>
-                <h2 id="preview-heading">A small system, made visible</h2>
-              </div>
+        <section class="network-section content-width" id="explore-system" aria-labelledby="preview-heading">
+          <div class="network-demo" data-landing-network>
+            <div class="network-demo-head">
+              <div><p class="preview-kicker">A MAP YOU CAN EXPLORE</p><h2 id="preview-heading">A small system, made visible</h2></div>
               <span class="demo-label"><span></span> Illustrative demo</span>
             </div>
-            <div class="preview-canvas">
-              <svg id="architecture-preview" viewBox="0 0 760 390" role="group" aria-label="Interactive illustrative software architecture map. Focus or hover over a component to read what it represents.">
-                <g class="preview-connectors" aria-hidden="true">
-                  <path d="M222 195 C235 195 239 195 252 195"/>
-                  <path d="M252 195 C267 195 264 89 280 89"/>
-                  <path d="M252 195 C267 195 264 301 280 301"/>
-                  <path d="M466 89 C489 89 506 89 530 89"/>
-                  <path d="M466 301 C489 301 506 301 530 301"/>
-                  <circle class="junction-ring" cx="252" cy="195" r="6"/>
-                  <circle class="junction-core" cx="252" cy="195" r="2.2"/>
-                  <circle class="port" cx="222" cy="195" r="3.5"/>
-                  <circle class="port" cx="280" cy="89" r="3.5"/>
-                  <circle class="port" cx="280" cy="301" r="3.5"/>
-                  <circle class="port" cx="466" cy="89" r="3.5"/>
-                  <circle class="port" cx="530" cy="89" r="3.5"/>
-                  <circle class="port" cx="466" cy="301" r="3.5"/>
-                  <circle class="port" cx="530" cy="301" r="3.5"/>
-                </g>
-                <g class="preview-node is-selected" data-preview-node data-title="Web client" data-kind="ENTRY POINT" data-description="An illustrative starting point for a request into this sample system." role="button" tabindex="0" aria-pressed="true" aria-label="Web client. An illustrative starting point for a request into this sample system." aria-describedby="preview-description">
-                  <rect class="node-card" x="44" y="151" width="178" height="88" rx="15"/>
-                  <circle class="node-icon" cx="68" cy="178" r="11"/><path class="node-symbol" d="M63 178h10M68 173v10"/>
-                  <text class="node-type" x="87" y="181">ENTRY POINT</text>
-                  <text class="node-title" x="62" y="215">Web client</text>
-                  <circle class="node-status" cx="205" cy="171" r="3"/>
-                </g>
-                <g class="preview-node" data-preview-node data-title="API service" data-kind="SERVICE" data-description="An illustrative service that receives a request and routes work." role="button" tabindex="0" aria-pressed="false" aria-label="API service. An illustrative service that receives a request and routes work." aria-describedby="preview-description">
-                  <rect class="node-card" x="280" y="45" width="186" height="88" rx="15"/>
-                  <circle class="node-icon" cx="304" cy="72" r="11"/><path class="node-symbol" d="M300 72h8M304 68v8"/>
-                  <text class="node-type" x="323" y="75">SERVICE</text>
-                  <text class="node-title" x="298" y="109">API service</text>
-                  <circle class="node-status" cx="449" cy="65" r="3"/>
-                </g>
-                <g class="preview-node" data-preview-node data-title="Data store" data-kind="STORAGE" data-description="An illustrative place where the sample system keeps application records." role="button" tabindex="0" aria-pressed="false" aria-label="Data store. An illustrative place where the sample system keeps application records." aria-describedby="preview-description">
-                  <rect class="node-card" x="530" y="45" width="186" height="88" rx="15"/>
-                  <circle class="node-icon" cx="554" cy="72" r="11"/><path class="node-symbol" d="M550 69c0-2 8-2 8 0v6c0 2-8 2-8 0zM550 72c0 2 8 2 8 0"/>
-                  <text class="node-type" x="573" y="75">STORAGE</text>
-                  <text class="node-title" x="548" y="109">Data store</text>
-                  <circle class="node-status" cx="699" cy="65" r="3"/>
-                </g>
-                <g class="preview-node" data-preview-node data-title="Job queue" data-kind="ASYNC WORK" data-description="An illustrative handoff point for work that runs outside the request path." role="button" tabindex="0" aria-pressed="false" aria-label="Job queue. An illustrative handoff point for work that runs outside the request path." aria-describedby="preview-description">
-                  <rect class="node-card" x="280" y="257" width="186" height="88" rx="15"/>
-                  <circle class="node-icon" cx="304" cy="284" r="11"/><path class="node-symbol" d="M300 281h8M300 284h8M300 287h5"/>
-                  <text class="node-type" x="323" y="287">ASYNC WORK</text>
-                  <text class="node-title" x="298" y="321">Job queue</text>
-                  <circle class="node-status" cx="449" cy="277" r="3"/>
-                </g>
-                <g class="preview-node" data-preview-node data-title="Worker" data-kind="PROCESS" data-description="An illustrative background process that handles queued jobs." role="button" tabindex="0" aria-pressed="false" aria-label="Worker. An illustrative background process that handles queued jobs." aria-describedby="preview-description">
-                  <rect class="node-card" x="530" y="257" width="186" height="88" rx="15"/>
-                  <circle class="node-icon" cx="554" cy="284" r="11"/><path class="node-symbol" d="M551 281h6v6h-6zM554 278v3M554 287v3M548 284h3M557 284h3"/>
-                  <text class="node-type" x="573" y="287">PROCESS</text>
-                  <text class="node-title" x="548" y="321">Worker</text>
-                  <circle class="node-status" cx="699" cy="277" r="3"/>
-                </g>
-              </svg>
-            </div>
-            <p class="preview-scroll-hint">Swipe or scroll the example to see every component.</p>
-            <div class="preview-description-row">
-              <div class="preview-detail-icon" aria-hidden="true"><span id="preview-detail-initial">W</span></div>
-              <div class="preview-detail-copy" aria-live="polite">
-                <div class="preview-detail-heading"><strong id="preview-detail-title">Web client</strong><span id="preview-detail-kind">ENTRY POINT</span></div>
-                <p id="preview-description">An illustrative starting point for a request into this sample system.</p>
+            <section class="study" id="homepage-network-stage" data-network-stage aria-label="Interactive three-dimensional architecture study" tabindex="0" aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Space 0 Escape" aria-describedby="network-gesture-guide" data-yaw="0.22" data-pitch="-0.12" data-motion="true" data-selected="">
+              <canvas id="landing-network-canvas" aria-hidden="true"></canvas>
+              <div class="field-label field-label-left"><span class="tiny-dot"></span>01 / CONNECTED SYSTEM</div>
+              <div class="matrix">
+                <div class="column layers">
+                  <h2>Software layers</h2>
+                  <button class="row" data-item="interface" type="button" aria-pressed="false"><span class="row-index">A</span><span>Interface</span><span class="row-point" aria-hidden="true"></span></button>
+                  <button class="row" data-item="services" type="button" aria-pressed="false"><span class="row-index">B</span><span>Services</span><span class="row-point" aria-hidden="true"></span></button>
+                  <button class="row" data-item="async" type="button" aria-pressed="false"><span class="row-index">C</span><span>Async work</span><span class="row-point" aria-hidden="true"></span></button>
+                  <p class="column-note">One system. Many relationships.</p>
+                </div>
+                <div class="column parts">
+                  <h2>Connected components</h2>
+                  <button class="row" data-item="web" type="button" aria-pressed="false"><span class="row-point" aria-hidden="true"></span><span>Web client</span><span class="row-index">01</span></button>
+                  <button class="row" data-item="api" type="button" aria-pressed="false"><span class="row-point" aria-hidden="true"></span><span>API service</span><span class="row-index">02</span></button>
+                  <button class="row" data-item="data" type="button" aria-pressed="false"><span class="row-point" aria-hidden="true"></span><span>Data store</span><span class="row-index">03</span></button>
+                  <button class="row" data-item="queue" type="button" aria-pressed="false"><span class="row-point" aria-hidden="true"></span><span>Job queue</span><span class="row-index">04</span></button>
+                  <button class="row" data-item="worker" type="button" aria-pressed="false"><span class="row-point" aria-hidden="true"></span><span>Worker</span><span class="row-index">05</span></button>
+                </div>
               </div>
-            </div>
-            <div class="preview-card-foot"><span>Example components only</span><span>Focus or hover a card to explore</span></div>
+            </section>
+            <footer class="study-footer">
+              <div class="selection-detail" aria-live="polite" aria-atomic="true"><span class="detail-marker" aria-hidden="true"></span><div><strong id="network-detail-title">Software, in perspective</strong><p id="network-detail-text">Every dot is a part. Every line is a relationship.</p></div></div>
+              <div class="network-gesture-guide" id="network-gesture-guide"><span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 9V7a5 5 0 0 1 10 0v6a5 5 0 0 1-10 0ZM10 3v5"/></svg>Hover to explore</span><span>Drag or scroll the dots</span><span class="key-guide">Arrows rotate · Space pauses</span></div>
+            </footer>
+
           </div>
         </section>
 
