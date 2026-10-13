@@ -8,6 +8,8 @@
   --scene-soft-accent: color-mix(in srgb, var(--landing-card), var(--landing-accent) 12%);
   --scene-accent-ink: color-mix(in srgb, var(--landing-ink), var(--landing-accent) 42%);
   --scene-logo-muted: color-mix(in srgb, var(--landing-accent) 62%, var(--landing-canvas));
+  --scene-logo-ink: #394329;
+  --scene-plinth-ink: color-mix(in srgb, var(--landing-ink), var(--landing-quiet) 32%);
   --scene-shadow: #25291f;
   width: 100%; min-width: 0; justify-self: end;
   border: 0; background: transparent; box-shadow: none;

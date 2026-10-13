@@ -60,6 +60,7 @@ const server = http.createServer(async (request, response) => {
   }
 });
 const port = Number(process.env.PORT || 4173);
-server.listen(port, "127.0.0.1", () => {
-  process.stdout.write("Project Atlas ready at http://127.0.0.1:" + server.address().port + "\n");
+const host = process.env.HOST || "127.0.0.1";
+server.listen(port, host, () => {
+  process.stdout.write("Project Atlas ready at http://" + host + ":" + server.address().port + "\n");
 });

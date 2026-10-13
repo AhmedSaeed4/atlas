@@ -83,7 +83,32 @@ export function createSceneEmblem() {
     const center = Object.fromEntries(["x", "y", "z"].map(key => [key, (caps[0].center[key] + caps[1].center[key]) / 2]));
     return { faces, center };
   });
+  // Cache shared edges once. Only true silhouettes and cap rims receive ink.
+  for (const solid of [...platforms, ...tiles]) {
+    const edges = new Map();
+    const vertexKey = p => [p.x, p.y, p.z].map(n => n.toFixed(9)).join(",");
+    for (const face of solid.faces) face.points.forEach((a, i) => {
+      const b = face.points[(i + 1) % face.points.length];
+      const key = [vertexKey(a), vertexKey(b)].sort().join("|");
+      if (!edges.has(key)) edges.set(key, { points: [a, b], faces: [] });
+      edges.get(key).faces.push(face);
+    });
+    solid.edges = [...edges.values()];
+  }
   return { platforms, tiles };
+}
+
+/** Ink stays on visible contours; hidden faces and bevel tessellation get no lines. */
+export function sceneInkEdges(solid, visibleFaces) {
+  const visible = new Set(visibleFaces);
+  return solid.edges.flatMap(edge => {
+    const count = edge.faces.reduce((sum, face) => sum + Number(visible.has(face)), 0);
+    if (count === 1) return [{ points: edge.points, silhouette: true }];
+    if (count === 2 && edge.faces.some(face => face.cap || face.slab !== undefined)) {
+      return [{ points: edge.points, silhouette: false }];
+    }
+    return [];
+  });
 }
 
 export function sceneEmblemFaces(emblem, camera) {
@@ -243,7 +268,6 @@ export function mountLandingScene(root) {
   const panels = createLandingScene();
   // Build rounded geometry once; rotation only projects/culls the small cached mesh.
   const emblem = createSceneEmblem();
-  const logo = emblem.tiles.flatMap(tile => tile.faces);
   const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
   const lifts = Object.fromEntries(panels.map(panel => [panel.id, 0]));
   let w = 0, h = 0, dpr = 1, scale = 1, offset = { x: 0, y: 0 }, palette = {}, raf = 0, visible = true;
@@ -452,12 +476,21 @@ export function mountLandingScene(root) {
     objects.sort((a, b) => a.depth - b.depth).forEach(object => {
       if (object.panel) {
         drawPanel(object.panel); hits.push({ id: object.panel.id, polygon: corners(object.panel).map(screen) });
-      } else for (const face of sceneEmblemFaces(emblem, current)) {
-        if (face.tile !== undefined) {
-          // Matching edge paint closes antialias seams without outlining every bevel facet.
-          line(face.points, face.fill, 1, .5, true, face.fill);
-          if (face.cap) line(face.points, palette.accentInk, .28, .55, true);
-        } else line(face.points, palette.ink, .52, .7, true, palette[face.material]);
+      } else {
+        const solids = new Map();
+        for (const face of sceneEmblemFaces(emblem, current)) {
+          const solid = face.tile !== undefined ? emblem.tiles[face.tile] : emblem.platforms[face.slab];
+          if (!solids.has(solid)) solids.set(solid, []);
+          solids.get(solid).push(face);
+        }
+        // Finish each solid's fill and ink before painting a nearer solid over it.
+        for (const [solid, faces] of solids) {
+          for (const face of faces) line(face.points, face.fill, 1, .5, true, face.fill);
+          const ink = faces[0].tile !== undefined ? palette.logoInk : palette.plinthInk;
+          for (const edge of sceneInkEdges(solid, faces)) {
+            line(edge.points, ink, edge.silhouette ? .95 : .48, edge.silhouette ? 1.15 : .6);
+          }
+        }
       }
     });
     root.dataset.yaw = current.yaw.toFixed(3); root.dataset.pitch = current.pitch.toFixed(3); root.dataset.active = active || "";
@@ -511,14 +544,26 @@ export function mountLandingScene(root) {
       ink: color("--landing-ink"), quiet: color("--landing-quiet"), accent: color("--landing-accent"),
       paper: color("--scene-paper"), paperShade: color("--scene-paper-shade"), edge: color("--scene-edge"),
       inset: color("--scene-inset"), softAccent: color("--scene-soft-accent"), accentInk: color("--scene-accent-ink"),
-      logoMuted: color("--scene-logo-muted"), shadow: color("--scene-shadow")
+      logoMuted: color("--scene-logo-muted"), logoInk: color("--scene-logo-ink"),
+      plinthInk: color("--scene-plinth-ink"), shadow: color("--scene-shadow")
     };
-    for (const face of logo) {
-      const base = face.muted ? palette.logoMuted : palette.accent;
-      const light = face.normal[0] * -.45 + face.normal[1] * .70 + face.normal[2] * .55;
-      const amount = face.cap ? (light > 0 ? 0 : 12) : Math.min(44, Math.abs(light - .35) * 36 + 7);
-      const tint = light > .35 ? "#fafbdd" : "#48512c";
-      face.fill = amount ? `color-mix(in srgb, ${base}, ${tint} ${amount.toFixed(1)}%)` : base;
+    // A fixed world light and three flat tones give a cel-painted finish without
+    // view-dependent highlights or per-frame color work.
+    for (const tile of emblem.tiles) {
+      const base = tile.faces[0].muted ? palette.logoMuted : palette.accent;
+      const tones = [
+        `color-mix(in srgb, ${base}, #3c482b 34%)`,
+        base,
+        `color-mix(in srgb, ${base}, #f8f9d8 26%)`
+      ];
+      for (const face of tile.faces) {
+        const light = face.normal[0] * -.45 + face.normal[1] * .70 + face.normal[2] * .55;
+        face.fill = tones[light < .18 ? 0 : light > .72 ? 2 : 1];
+      }
+    }
+    for (const solid of emblem.platforms) for (const face of solid.faces) {
+      face.fill = face.normal[1] > .5 ? palette.paper
+        : face.normal[0] < -.5 || face.normal[2] > .5 ? palette.paperShade : palette.edge;
     }
 
     render(); requestFrame();
