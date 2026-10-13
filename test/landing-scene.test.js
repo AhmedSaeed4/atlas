@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains } from "../public/src/landing-scene.js";
+import { createLandingScene, projectScenePoint, orbitSceneCamera, easeSceneCamera, scenePolygonContains, sceneMotionStep } from "../public/src/landing-scene.js";
 
 test("the scene contains upright and horizontal world planes with independently returned geometry",()=>{
   const panels=createLandingScene();
@@ -49,4 +49,24 @@ test("camera easing takes the short arc across the full-turn boundary",()=>{
   assert.ok(Math.abs(next.yaw)>3.1);
   assert.ok(Math.abs(next.pitch-.7)<1e-9);
   assert.deepEqual(easeSceneCamera(current,target,1),target);
+});
+
+test("camera damping has the same timing on 30, 60 and 120 Hz displays and bounds suspended frames", () => {
+  const target = { yaw: .8, pitch: .9 };
+  const run = hz => {
+    let camera = { yaw: -.8, pitch: .4 };
+    for (let i = 0; i < hz / 2; i++) camera = easeSceneCamera(camera, target, sceneMotionStep(1000 / hz));
+    return camera;
+  };
+  const reference = run(60);
+  for (const hz of [30, 120]) {
+    assert.ok(Math.abs(run(hz).yaw - reference.yaw) < 1e-12);
+    assert.ok(Math.abs(run(hz).pitch - reference.pitch) < 1e-12);
+  }
+  assert.equal(sceneMotionStep(-10), 0);
+  assert.equal(sceneMotionStep(30000), sceneMotionStep(64));
+  for (const elapsed of [0, 8, 16, 64, NaN, Infinity]) {
+    assert.ok(Number.isFinite(sceneMotionStep(elapsed)));
+    assert.ok(sceneMotionStep(elapsed) >= 0 && sceneMotionStep(elapsed) < 1);
+  }
 });
