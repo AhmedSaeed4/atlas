@@ -295,7 +295,9 @@ html[data-theme="light"] .online-library-heading span{color:var(--atlas-quiet)}
 .workspace-inspector-skeleton .workspace-skeleton-line:nth-child(2){width:70%;height:16px;margin-bottom:8px}
 .workspace-inspector-skeleton .workspace-skeleton-line:nth-child(4){width:84%}
 .workspace-inspector-skeleton .workspace-skeleton-detail-block{height:66px;margin-top:10px;border-radius:9px}
-#project-description,#project-title,#project-type,#type-filter-content,#graph,#timeline-view,#inspector-content{transition:opacity .24s ease,visibility 0s}
+#project-description,#project-title,#project-type,#type-filter-content,#timeline-view,#inspector-content{transition:opacity .24s ease,visibility 0s}
+/* The map uses its card/connector entrance, never a whole-SVG fade. */
+#graph{transition:none}
 .main-area[data-workspace-loading="skeleton"] #project-description,
 .main-area[data-workspace-loading="skeleton"] #type-filter-content,
 .main-area[data-workspace-loading="skeleton"] #graph,
@@ -309,7 +311,6 @@ html[data-theme="light"] .online-library-heading span{color:var(--atlas-quiet)}
 .main-area[data-workspace-loading="skeleton"][data-workspace-heading-known="false"] #project-title{opacity:0;visibility:hidden;transition:none}
 .main-area[data-workspace-loading="skeleton"] .filter-group{min-width:240px}
 .main-area[data-workspace-loading="skeleton"] .workspace-skeleton-line::after{animation:workspace-skeleton-glide 2s ease-in-out infinite}
-.main-area[data-workspace-loading="preview"] #graph{opacity:.94}
 #project-list .project-row.is-workspace-loading{position:relative;isolation:isolate}
 #project-list .project-row.is-workspace-loading::before{position:absolute;inset:0;z-index:0;content:"";border-radius:inherit;pointer-events:none;background:linear-gradient(105deg,transparent 20%,#ffffff14 50%,transparent 80%);background-size:220% 100%;animation:workspace-row-breathe 2s ease-in-out infinite}
 #project-list .project-row.is-workspace-loading>button{position:relative;z-index:1}
