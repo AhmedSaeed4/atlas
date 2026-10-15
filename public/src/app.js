@@ -29,6 +29,7 @@ import { initLocalMapTip } from "./local-map-tip.js";
 import { createActionGate, startButtonProgress } from "./action-feedback.js";
 import { createChoicePicker } from "./choice-picker.js";
 import { createSidebarDrawer } from "./sidebar-drawer.js";
+import { createGraphFullscreen } from "./graph-fullscreen.js";
 import { createEditHistory, editHistoryShortcut } from "./edit-history.js";
 import { canImportArchitecture, createCloudImportController } from "./cloud-import.js";
 import { admissionRequiresConfirmation, associationWorkspaceId, findPendingAdmissionAssociation, localProjectForWorkspaceAssociation, workspaceForLocalAssociation, writeOwnerAssociation } from "./cloud-associations.js";
@@ -81,6 +82,7 @@ let inspectorWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorPreferredWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorRestoreWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorExpanded = false;
+let fullscreenInspectorExpanded = false;
 let inspectorResizePointer = null;
 const importReadGate = createRevisionGate();
 const droppedFileGate = createRevisionGate();
@@ -264,6 +266,31 @@ const sidebarDrawer = createSidebarDrawer({
   sidebar: byId("sidebar"), main: byId("workspace-main"), trigger: byId("mobile-menu"),
   backdrop: byId("sidebar-backdrop"), closeButton: byId("sidebar-close"), onChange: () => localMapTip.refresh(),
 });
+const graphFullscreen = createGraphFullscreen({
+  toggle: byId("graph-fullscreen"),
+  beforeEnter: () => {
+    sidebarDrawer.setOpen(false);
+    libraryPicker.close();
+    hideGraphContextMenu();
+    byId("export-menu").hidden = true;
+  },
+  captureView: () => {
+    stopFitAnimation();
+    return { projectId: activeProject()?.id || "", viewMode, width: innerWidth, height: innerHeight, transform: { ...transform } };
+  },
+  onChange: (active, previous) => {
+    if (!active) applyInspectorWidth(inspectorExpanded ? currentInspectorLimits().max : inspectorPreferredWidth, { expanded: inspectorExpanded });
+    if (!active && previous.projectId === (activeProject()?.id || "") && previous.viewMode === viewMode
+        && previous.width === innerWidth && previous.height === innerHeight) {
+      stopFitAnimation();
+      transform = { ...previous.transform };
+      setViewportTransform();
+    } else fitGraph(false);
+    fullscreenInspectorExpanded = false;
+    renderInspector();
+    localMapTip.refresh();
+  },
+});
 const emptyGraph = () => ({ schemaVersion: 1, project: { name: "No project selected", description: "", type: "Software project" }, nodes: [], edges: [] });
 const currentGraph = () => activeProject()?.graph || emptyGraph();
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -370,6 +397,33 @@ function inspectorWorkspaceWidth() {
 function currentInspectorLimits() {
   return inspectorWidthLimits(inspectorWorkspaceWidth());
 }
+function refreshFullscreenInspector(hasDetails) {
+  const active = graphFullscreen.isActive();
+  if (hasDetails === undefined) {
+    const graph = currentGraph();
+    hasDetails = graph.nodes.some(node => node.id === selectedNodeId)
+      || (isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)
+        && graph.edges.some(edge => edge.id === selectedEdgeId));
+  }
+  const inspector = byId("inspector");
+  const open = active && hasDetails;
+  document.documentElement.classList.toggle("graph-inspector-open", open);
+  document.documentElement.classList.toggle("graph-inspector-wide", active && fullscreenInspectorExpanded);
+  if (active && !open && inspector.contains(document.activeElement)) {
+    byId(viewMode === "timeline" ? "show-timeline" : "graph").focus({ preventScroll: true });
+  }
+  inspector.inert = active && !open;
+  const closeButton = byId("close-inspector");
+  closeButton.setAttribute("aria-label", active ? "Close component details" : "Clear selection");
+  closeButton.title = active ? "Close component details" : "Clear selection";
+  if (!active) return;
+  const expandButton = byId("expand-inspector");
+  const label = fullscreenInspectorExpanded ? "Restore details width" : "Expand details";
+  expandButton.setAttribute("aria-label", label);
+  expandButton.title = label;
+  expandButton.setAttribute("aria-expanded", String(fullscreenInspectorExpanded));
+  expandButton.disabled = !fullscreenInspectorExpanded && inspectorWorkspaceWidth() <= 380;
+}
 function applyInspectorWidth(value, { persist = false, expanded = false } = {}) {
   const workspace = document.querySelector(".graph-workspace");
   const limits = currentInspectorLimits();
@@ -399,6 +453,7 @@ function applyInspectorWidth(value, { persist = false, expanded = false } = {}) 
       inspectorPreferredWidth = inspectorWidth;
     }
   }
+  if (graphFullscreen.isActive()) refreshFullscreenInspector();
   return inspectorWidth;
 }
 
@@ -449,6 +504,11 @@ function bindInspectorResize() {
     fitGraph(false);
   });
   byId("expand-inspector").addEventListener("click", () => {
+    if (graphFullscreen.isActive()) {
+      fullscreenInspectorExpanded = !fullscreenInspectorExpanded;
+      refreshFullscreenInspector();
+      return;
+    }
     const limits = currentInspectorLimits();
     if (inspectorExpanded) {
       applyInspectorWidth(inspectorRestoreWidth, { persist: true });
@@ -2919,9 +2979,11 @@ function renderTouchEdgeInspector(edge, container) {
 }
 function renderInspector() {
   const container = byId("inspector-content");
-  container.replaceChildren();
   const graph = currentGraph();
   const node = graph.nodes.find((item) => item.id === selectedNodeId);
+  refreshFullscreenInspector(Boolean(node) || (isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)
+    && graph.edges.some(edge => edge.id === selectedEdgeId)));
+  container.replaceChildren();
   byId("add-edge").disabled = graph.nodes.length < 1 || !canMutateCurrent();
   if (!node && isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)) {
     const edge = graph.edges.find((item) => item.id === selectedEdgeId);
@@ -4877,8 +4939,10 @@ function attachEvents() {
   });
   byId("close-inspector").addEventListener("click", () => {
     selectedNodeId = null;
+    if (graphFullscreen.isActive()) { selectedEdgeId = null; touchSelectedEdge = null; }
     renderInspector();
     refreshTraceStyles();
+    refreshEdgeSelection();
   });
   byId("search").addEventListener("input", (event) => {
     searchTerm = event.target.value.trim().toLowerCase();
@@ -4998,6 +5062,16 @@ function attachEvents() {
     if (event.target.closest(".project-row")) sidebarDrawer.setOpen(false);
   });
 
+  byId("timeline-view").addEventListener("click", (event) => {
+    if (!graphFullscreen.isActive() || event.button !== 0 || (!selectedNodeId && !selectedEdgeId)) return;
+    if (event.target.closest?.(".timeline-node-card, button, a, input, textarea, select, summary, [contenteditable]")) return;
+    selectedNodeId = null;
+    selectedEdgeId = null;
+    touchSelectedEdge = null;
+    renderInspector();
+    renderGraph();
+  });
+
   const graphSvg = byId("graph");
   const graphStage = byId("graph-stage");
   const preventGraphNativeSelection = (event) => event.preventDefault();
@@ -5090,10 +5164,12 @@ function attachEvents() {
       event.preventDefault();
       openImport();
     } else if (event.key === "Escape") {
-      if (dragState?.kind === "connection") cancelActiveConnection();
+      if (event.defaultPrevented || document.querySelector("dialog[open]")) return;
+      if (dragState?.kind === "connection") { event.preventDefault(); cancelActiveConnection(); return; }
       const menu = byId("graph-context-menu");
-      if (!menu.hidden) { event.preventDefault(); hideGraphContextMenu({ restoreFocus: true }); }
-      byId("export-menu").hidden = true;
+      if (!menu.hidden) { event.preventDefault(); hideGraphContextMenu({ restoreFocus: true }); return; }
+      if (!byId("export-menu").hidden) { event.preventDefault(); byId("export-menu").hidden = true; return; }
+      graphFullscreen.handleKeydown(event);
     }
   });
   document.addEventListener("visibilitychange", () => {
