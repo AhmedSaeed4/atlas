@@ -5,7 +5,8 @@ import { traceRoutes } from "./traces.js";
 import { layoutGraph } from "./layout.js";
 import { edgeGeometry, edgeRoutingLanes, graphBounds } from "./geometry.js";
 import { SAMPLE_GRAPHS } from "./samples.js";
-import { clearLibrary, createProjectId, readLibrary, writeLibrary } from "./storage.js";
+import { createProjectId, LIBRARY_STORAGE_KEY } from "./storage.js";
+import { createLocalLibrary, reconcileLocalLibrary } from "./local-library.js";
 import { buildSvg, copyPng, downloadBlob, downloadText, exportJson, safeFilename, svgToPngBlob } from "./exports.js";
 import { buildAgentPrompt } from "./prompt.js";
 import { chartCompactReadout, chartDescription, chartGeometry, chartPresentation, chartValueLabel, createChartFigure } from "./charts.js";
@@ -41,7 +42,8 @@ const svgNS = "http://www.w3.org/2000/svg";
 const FLOW_EXAMPLE_ID = "request-flow";
 const FLOW_EXAMPLE_NAME = "Request flow demo";
 const isFlowExample = (project) => project?.exampleId === FLOW_EXAMPLE_ID;
-const stored = readLibrary(normalizeGraph);
+const localLibrary = createLocalLibrary({ normalizeGraph, onChange: updateLocalLibraryStatus });
+const stored = localLibrary.initial;
 let recoveryMode = !stored.writable;
 let recoveryText = stored.rawBackup || "";
 let projects = stored.projects ?? [];
@@ -91,6 +93,9 @@ let fitAnimationFrame = 0;
 let fitAnimationSequence = 0;
 let animateStructure = true;
 let lastStorageError = "";
+let localSyncReady = false;
+let localSyncScheduled = false;
+let localSyncAfterWrite = false;
 let transform = { x: 0, y: 0, scale: 1 };
 let viewMode = "graph";
 const CLOUD_ASSOCIATIONS_KEY = "atlas.online.associations.v1";
@@ -185,12 +190,12 @@ const activeProject = () => onlineRoute || onlineWorkspaceOpen
   : projects.find((project) => project.id === activeId) || null;
 const projectById = (id) => onlineGraphProject?.id === id ? onlineGraphProject : projects.find((project) => project.id === id) || null;
 const isOnlineSession = () => onlineRoute || onlineWorkspaceOpen;
-const canMutateCurrent = () => !isOnlineSession() || onlineState.canEdit === true;
+const canMutateCurrent = () => isOnlineSession() ? onlineState.canEdit === true : !localLibrary.state().clearing;
 const currentWorkspaceActions = () => workspaceActionAvailability({
   hasProject: Boolean(activeProject()), online: isOnlineSession(), state: onlineState,
   graphWorkspaceId: onlineGraphProject?.onlineWorkspaceId || "", unavailable: onlineUiUnavailable, sharedView: onlineRoute,
 });
-const canImportCurrent = () => canImportArchitecture({
+const canImportCurrent = () => !(libraryMode === "local" && localLibrary.state().clearing) && canImportArchitecture({
   destination: libraryMode, canEdit: canMutateCurrent(), ownerUid: currentAccountUid(),
   sharedViewer: isSharedViewer({ sharedView: onlineRoute, state: onlineState }),
 });
@@ -202,6 +207,7 @@ const requireImport = () => {
   return false;
 };
 const requireMutation = (action = "change this map") => {
+  if (!isOnlineSession() && localLibrary.state().clearing) { showToast("Wait until clearing local maps finishes.", "error"); return false; }
   if (canMutateCurrent()) return true;
   showToast("This online map is read-only. Only its signed-in owner can " + action + ".", "error");
   return false;
@@ -1908,11 +1914,12 @@ async function saveMapSettingsDetails() {
       const project = current.project;
       project.graph = candidate;
       project.updatedAt = Date.now();
-      const result = writeLibrary(projects, activeId);
+      const result = await localLibrary.save(projects, activeId);
       if (!result.ok) {
-        project.graph = sourceGraph;
+        if (project.graph === candidate) project.graph = sourceGraph;
         throw new Error(result.error || "The local map could not be saved.");
       }
+      if (project.graph !== candidate || !mapSettingsController.isCurrent(target)) return { graph: candidate };
       editHistory.record(settingsHistoryScope, candidate);
       mapSettingsLocalGraphRef = candidate;
       mapSettingsLocalFingerprint = JSON.stringify(candidate);
@@ -1963,7 +1970,7 @@ function confirmDeleteLocalTarget(target) {
     showMapSettingsMessage("Resolve the pending Cloud Workspace save before deleting this local map.", { error: true });
     return;
   }
-  confirmSettingsAction(target, "Delete this local map?", "Remove " + (project.graph.project.name || "this map") + " from this browser's Local Workspace library? This does not delete any Cloud Workspace copy.", "Delete local map", (current) => {
+  confirmSettingsAction(target, "Delete this local map?", "Remove " + (project.graph.project.name || "this map") + " from this browser's Local Workspace library? This does not delete any Cloud Workspace copy.", "Delete local map", async (current) => {
     if (localProjectHasUnresolvedCloudCandidate(current.id)) throw new Error("Resolve the pending Cloud Workspace save before deleting this local map.");
     const live = resolveMapSettingsTarget(current, { projects, workspaces: onlineLibraryCache.snapshot || [], currentUid: currentAccountUid() });
     if (!live || live.project !== project) throw new Error("This local map changed or was removed before deletion.");
@@ -1987,10 +1994,10 @@ function confirmDeleteLocalTarget(target) {
       searchTerm = "";
       byId("search").value = "";
     }
-    const saved = writeLibrary(projects, activeId);
+    const saved = await localLibrary.save(projects, activeId);
     renderAll();
-    if (deletion.wasActive) fitGraph(true);
-    closeMapSettings();
+    if (deletion.wasActive && activeId === deletion.activeId && !isOnlineSession()) fitGraph(true);
+    if (mapSettingsController.isCurrent(target)) closeMapSettings();
     if (!saved.ok) showToast(saved.error || "The local map was removed from this session but could not be saved to browser storage.", "error");
     return true;
   });
@@ -2396,6 +2403,7 @@ function localRecoveryMode() {
   if (statusDot) statusDot.style.background = recoveryMode ? "#c59a71" : "";
   updateLibraryStatusCopy();
   byId("download-recovery").hidden = !recoveryText;
+  updateLocalLibraryStatus();
 }
 function cloudEditHistoryScope(ownerUid, workspaceId) {
   return ownerUid && workspaceId ? "cloud:" + JSON.stringify([String(ownerUid), String(workspaceId)]) : "";
@@ -2437,7 +2445,73 @@ function performEditHistory(direction) {
   byId("action-announcement").textContent = direction === "undo" ? "Last edit undone." : "Last edit redone.";
   return true;
 }
-function persist(showFailure = true) {
+function updateLocalLibraryStatus() {
+  const notice = byId("local-library-notice");
+  if (!notice) return;
+  const state = localLibrary.state();
+  if (state.pending) localSyncAfterWrite = true;
+  else if (localSyncAfterWrite) { localSyncAfterWrite = false; scheduleLocalLibrarySync(); }
+  notice.hidden = !state.error;
+  byId("local-library-message").textContent = state.error;
+  byId("reload-local-library").disabled = state.pending > 0;
+  if (!isOnlineSession() && !recoveryMode) {
+    byId("save-status").textContent = state.clearing ? "Clearing local maps…" : state.pending ? "Saving locally…" : state.error ? "Changes not saved" : "Saved locally";
+  }
+}
+function scheduleLocalLibrarySync() {
+  if (!localSyncReady || localSyncScheduled) return;
+  localSyncScheduled = true;
+  queueMicrotask(() => { localSyncScheduled = false; synchronizeLocalTabs(); });
+}
+function synchronizeLocalTabs() {
+  const result = localLibrary.synchronize(projects, {
+    defer: Boolean(dragState || inspectorResizePointer !== null || document.querySelector("dialog[open]")),
+  });
+  if (result.status !== "updated") return;
+  const previous = projects;
+  const previousActiveId = activeId;
+  const next = reconcileLocalLibrary(projects, activeId, result.library);
+  projects = next.projects;
+  activeId = next.activeId;
+  lastStorageError = "";
+  const retainedIds = new Set(projects.map(project => project.id));
+  for (const project of previous) if (!retainedIds.has(project.id)) editHistory.forget("local:" + project.id);
+  for (const project of projects) {
+    if (previous.find(item => item.id === project.id)?.graph !== project.graph) editHistory.sync("local:" + project.id, project.graph);
+  }
+  if (isOnlineSession()) {
+    if (next.libraryChanged && libraryMode === "local") renderLibrary();
+  } else if (next.activeChanged) {
+    hideGraphContextMenu();
+    const graph = currentGraph();
+    if (!graph.nodes.some(node => node.id === selectedNodeId)) selectedNodeId = null;
+    if (!graph.edges.some(edge => edge.id === selectedEdgeId)) selectedEdgeId = null;
+    touchSelectedEdge = null;
+    if (activeId !== previousActiveId) {
+      viewMode = isFlowExample(activeProject()) ? "timeline" : "graph";
+      focusedType = ""; lockedType = ""; excludedTypes.clear();
+      searchTerm = ""; byId("search").value = "";
+    }
+    if (currentMapAdmissionContext?.project && previous.includes(currentMapAdmissionContext.project)
+        && !projects.includes(currentMapAdmissionContext.project)) currentMapAdmissionContext = null;
+    animateStructure = false;
+    renderAll();
+    if (activeId !== previousActiveId) fitGraph(false);
+    byId("action-announcement").textContent = "Local map updated from another tab.";
+  } else if (next.libraryChanged) renderLibrary();
+  updateLocalLibraryStatus();
+}
+function downloadLocalTabBackup() {
+  downloadText(JSON.stringify({ version: 1, activeId, projects }, null, 2), "atlas-local-tab-backup.json", "application/json;charset=utf-8");
+  showToast("Downloaded this tab's maps, including unsaved changes.");
+}
+function reloadLocalLibrary() {
+  if (localLibrary.state().pending) return;
+  if (localLibrary.hasUnsaved(projects)) {
+    openConfirm("Reload saved maps?", "This tab has unsaved local changes. Download this tab's maps before reloading to keep them. Reload replaces this tab with the latest saved library.", "Reload saved maps", () => location.reload());
+  } else location.reload();
+}
+async function persist(showFailure = true) {
   if (canMutateCurrent()) recordGraphEdit();
   if (isOnlineSession()) {
     if (!requireMutation("edit or save this map")) {
@@ -2451,8 +2525,7 @@ function persist(showFailure = true) {
       localProject.graph = onlineGraphProject.graph;
       localProject.updatedAt = Date.now();
       editHistory.sync(editHistoryScope(localProject), localProject.graph);
-      const localResult = writeLibrary(projects, activeId);
-      if (!localResult.ok) showToast(localResult.error, "error");
+      void localLibrary.save(projects, activeId).then(result => { if (!result.ok) showToast(result.error, "error"); });
     }
     const queued = onlineController.queueSave(onlineGraphProject.graph);
     if (!queued) byId("save-status").textContent = "Online changes not saved";
@@ -2466,14 +2539,13 @@ function persist(showFailure = true) {
     }
     return false;
   }
-  const result = writeLibrary(projects, activeId);
+  const selectedId = activeId;
+  const result = await localLibrary.save(projects, selectedId);
   if (result.ok) {
-    workspaceNavigation.rememberLocal();
-    byId("save-status").textContent = "Saved locally";
+    if (!isOnlineSession() && activeId === selectedId) workspaceNavigation.rememberLocal();
     lastStorageError = "";
     return true;
   }
-  byId("save-status").textContent = "Changes not saved";
   if (showFailure && result.error !== lastStorageError) showToast(result.error, "error");
   lastStorageError = result.error;
   return false;
@@ -3628,7 +3700,7 @@ function saveProjectDetails() {
   projectEditContext = null;
   graphChanged({ structure: false });
 }
-function createProject() {
+async function createProject() {
   if (libraryMode !== "local") { selectLibraryMode("local"); return; }
   if (isOnlineSession()) {
     if (!preserveDirtyOwnerDraftForNavigation() || !returnToLocalWorkspace()) return;
@@ -3648,11 +3720,11 @@ function createProject() {
   animateStructure = true;
   renderAll();
   fitGraph(false);
-  const savedLocally = persist();
-  if (savedLocally) void admitMapProject("new", project, project.id);
-  byId("project-title").focus?.();
+  const savedLocally = await persist();
+  if (savedLocally && activeProject() === project && !isOnlineSession()) void admitMapProject("new", project, project.id);
+  if (activeProject() === project) byId("project-title").focus?.();
 }
-function openFlowExample() {
+async function openFlowExample() {
   if (!requireMutation("add a local example")) return;
   if (isOnlineSession() && !returnToLocalWorkspace()) return;
   libraryMode = "local";
@@ -3677,7 +3749,7 @@ function openFlowExample() {
   animateStructure = true;
   renderAll();
   fitGraph(false);
-  const saved = persist();
+  const saved = await persist();
   if (added && saved) showToast("Added the request-flow example as a separate saved project. Your existing maps are unchanged.");
 }
 function confirmProjectDelete() {
@@ -4479,10 +4551,10 @@ function submitImport() {
       animateStructure = true;
       renderAll();
       fitGraph(true);
-      const saved = persist(false);
+      const saved = await persist(false);
       if (saved) {
         showToast("Imported " + graph.nodes.length + " components. This map is stored in this browser.");
-        void admitMapProject("import", project, project.id);
+        if (activeProject() === project && !isOnlineSession()) void admitMapProject("import", project, project.id);
       } else showToast("Imported for this session, but Atlas could not save the map in this browser. Download JSON before leaving.", "error");
     } catch (error) {
       if (cloudSaved) { showToast("The map was saved to Cloud Workspace but could not be opened. Select it from the cloud list.", "error"); return; }
@@ -4520,7 +4592,7 @@ function requestClearData() {
   const message = recoveryMode && recoveryText
     ? "This permanently removes the saved Project Atlas library from this browser. Download the saved-data backup first if you need to preserve it. Theme and inspector preferences remain; the workspace will be empty."
     : "This removes the saved Project Atlas library from this browser. Theme and inspector preferences remain; the workspace will be empty. You can add or import a map, or opt in to View example flow later.";
-  openConfirm("Clear local data and start fresh?", message, "Clear and start fresh", () => {
+  openConfirm("Clear local data and start fresh?", message, "Clear and start fresh", async () => {
     const pending = projects.find((project) => localProjectHasUnresolvedCloudCandidate(project.id));
     if (pending) {
       showToast("Resolve the pending Cloud Workspace save for " + (pending.graph.project.name || "this map") + " before clearing local data.", "error");
@@ -4536,7 +4608,7 @@ function requestClearData() {
     shareLoadTracker.cancel();
     clearIncomingShareFailure();
     confirmResumeShareLoad = null;
-    const result = clearLibrary();
+    const result = await localLibrary.clear();
     if (!result.ok) { showToast(result.error, "error"); return; }
     recoveryMode = false;
     recoveryText = "";
@@ -4547,20 +4619,23 @@ function requestClearData() {
     cloudAssociations = {};
     saveCloudAssociations();
     activeId = "";
-    viewMode = "graph";
-    selectedNodeId = null;
-    selectedEdgeId = null;
-    touchSelectedEdge = null;
-    focusedType = "";
-    lockedType = "";
-    excludedTypes.clear();
-    filterPointerActivation = null;
-    filterInputModality = "";
-    touchInteractionActive = false;
-    searchTerm = "";
-    byId("search").value = "";
+    if (!isOnlineSession()) {
+      viewMode = "graph";
+      selectedNodeId = null;
+      selectedEdgeId = null;
+      touchSelectedEdge = null;
+      focusedType = "";
+      lockedType = "";
+      excludedTypes.clear();
+      filterPointerActivation = null;
+      filterInputModality = "";
+      touchInteractionActive = false;
+      searchTerm = "";
+      byId("search").value = "";
+    }
     renderAll();
-    fitGraph(false);
+    if (!isOnlineSession()) fitGraph(false);
+    if (location.hash.startsWith("#map=")) void openIncomingShare();
     showToast("Local map data cleared. Your workspace is empty; add or import a map when ready.");
   });
 }
@@ -4857,7 +4932,7 @@ function dismissIncomingShareFailure() {
   byId("incoming-share-error").hidden = true;
 }
 async function openIncomingShare() {
-  if (onlineRoute) return;
+  if (onlineRoute || localLibrary.state().clearing) return;
   const request = shareLoadTracker.begin(location.hash);
   const fragment = request.fragment;
   if (!fragment.startsWith("#map=")) {
@@ -4898,7 +4973,8 @@ async function openIncomingShare() {
     animateStructure = true;
     renderAll();
     fitGraph(true);
-    const savedLocally = persist();
+    const savedLocally = await persist();
+    if (!shareLoadTracker.isCurrent(request, location.hash)) return;
     if (createdNow && savedLocally) {
       void admitMapProject("fragment", project, admissionKey);
     } else {
@@ -4940,6 +5016,15 @@ function toggleMotion() {
   updateMotionButton();
 }
 function attachEvents() {
+  byId("download-local-tab").addEventListener("click", downloadLocalTabBackup);
+  byId("reload-local-library").addEventListener("click", reloadLocalLibrary);
+  window.addEventListener("focus", scheduleLocalLibrarySync);
+  window.addEventListener("storage", event => {
+    if (event.key === LIBRARY_STORAGE_KEY || event.key === null) scheduleLocalLibrarySync();
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleLocalLibrarySync(); });
+  document.addEventListener("close", scheduleLocalLibrarySync, true);
+  document.addEventListener("keydown", event => { if (event.key === "Escape") scheduleLocalLibrarySync(); });
   initAccountPanel({ root: document, account: accountSession });
   initSettingsPanel({ root: document, account: accountSession });
   accountSession.subscribe((accountState) => {
@@ -5235,6 +5320,10 @@ function attachEvents() {
   graphSvg.addEventListener("lostpointercapture", endPointer);
   document.addEventListener("pointerup", endPointer);
   document.addEventListener("pointercancel", endPointer);
+  // Retry after gesture cleanup, including releases outside the graph.
+  document.addEventListener("pointerup", scheduleLocalLibrarySync);
+  document.addEventListener("pointercancel", scheduleLocalLibrarySync);
+  graphSvg.addEventListener("lostpointercapture", scheduleLocalLibrarySync);
   graphSvg.addEventListener("wheel", (event) => {
     event.preventDefault();
     const rect = byId("graph-stage").getBoundingClientRect();
@@ -5338,3 +5427,5 @@ function init() {
   }
 }
 init();
+localSyncReady = true;
+scheduleLocalLibrarySync();
