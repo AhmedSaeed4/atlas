@@ -92,7 +92,7 @@ export function buildSvg(graph, theme = "dark") {
       ? '<rect x="' + (geometry.labelX - geometry.labelWidth / 2) + '" y="' + (geometry.labelY - 10) + '" width="' + geometry.labelWidth + '" height="17" rx="8" fill="var(--export-card)" stroke="var(--export-border)"/>' +
         '<text x="' + geometry.labelX + '" y="' + (geometry.labelY + 2) + '" text-anchor="middle" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="9">' + escapeXml(geometry.label) + '</text>'
       : "";
-    return '<g><title>' + escapeXml(hasLabel ? geometry.fullLabel || geometry.label : "Unlabeled connection from " + sourceName + " to " + targetName) + '</title><path d="' + geometry.path + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5"/>' + labelMarkup + '</g>';
+    return '<g><title>' + escapeXml(hasLabel ? geometry.fullLabel || geometry.label : "Unlabeled connection from " + sourceName + " to " + targetName) + '</title><path d="' + geometry.path + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5"/><path class="edge-arrow" d="' + geometry.arrowPath + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' + labelMarkup + '</g>';
   }).join("");
   const nodeMarkup = graph.nodes.map((node) => {
     const point = positions.get(node.id);

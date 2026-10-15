@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { gzipSync } from "node:zlib";
 import { normalizeGraph, MAX_IMPORT_BYTES } from "../public/src/schema.js";
 import { branchEdgeCandidate } from "../public/src/refinement-graph.js";
+import { layoutGraph } from "../public/src/layout.js";
+import { edgeGeometry, edgeRoutingLanes } from "../public/src/geometry.js";
 import { SAMPLE_GRAPHS } from "../public/src/samples.js";
 import { buildSvg, escapeXml, safeRasterDimensions } from "../public/src/exports.js";
 import { createShareUrl, decodeShareHash, encodeShareHash, findSharedProject, isLocalShareHost, shareKey, shouldClearShareFragmentForDeletedProject } from "../public/src/share.js";
@@ -25,15 +27,15 @@ test("escapes XML text in standalone exports", () => {
   assert.doesNotMatch(svg, /#239d89|#f7f9f9/);
 });
 
-test("exports routed back edges and self-loops without arrowheads", () => {
+test("exports routed back edges and self-loops with directional arrowheads", () => {
   const graph = normalizeGraph({
     schemaVersion: 1, project: { name: "Routes" },
     nodes: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
     edges: [{ source: "a", target: "a", label: "self" }, { source: "b", target: "a", label: "back" }],
   });
   const svg = buildSvg(graph);
-  assert.doesNotMatch(svg, /stroke-width="1.5" stroke-linecap="round"/);
-  assert.equal((svg.match(/stroke="var\(--export-muted\)" stroke-width="1.5"/g) || []).length, 2);
+  assert.match(svg, /class="edge-arrow"[^>]+stroke-linecap="round"/);
+  assert.equal((svg.match(/stroke="var\(--export-muted\)" stroke-width="1.5"/g) || []).length, 4);
 });
 
 test("keeps parallel edge routes and full relation titles in standalone SVG", () => {
@@ -205,4 +207,25 @@ test("deleting a project clears only its exact current share fragment", () => {
   assert.equal(shouldClearShareFragmentForDeletedProject(project, "#map=g.other-snapshot"), false);
   assert.equal(shouldClearShareFragmentForDeletedProject(project, "#settings"), false);
   assert.equal(shouldClearShareFragmentForDeletedProject({}, "#map=g.shared-snapshot"), false);
+});
+
+test("each forward, reverse, parallel and loop export retains its live arrow geometry in both themes", () => {
+  const graph = normalizeGraph({ project: {name: "Direction survives export"}, nodes: [
+    {id: "a", label: "Client", position: {x: 0, y: 0}}, {id: "b", label: "Service", position: {x: 420, y: 160}},
+  ], edges: [
+    {id: "forward", source: "a", target: "b", label: "calls"},
+    {id: "parallel", source: "a", target: "b", type: "event"},
+    {id: "reverse", source: "b", target: "a"},
+    {id: "loop", source: "a", target: "a", label: "retries"},
+  ]});
+  const {positions, dimensions} = layoutGraph(graph), lanes = edgeRoutingLanes(graph.edges);
+  for (const theme of ["dark", "light"]) {
+    const svg = buildSvg(graph, theme);
+    assert.equal((svg.match(/class="edge-arrow"/g) || []).length, graph.edges.length);
+    graph.edges.forEach((edge, index) => {
+      const geometry = edgeGeometry(edge, index, positions, dimensions, lanes.get(index));
+      assert.ok(svg.includes('class="edge-arrow" d="' + geometry.arrowPath + '"'), edge.id + " arrow is missing or reversed in " + theme);
+      assert.ok(svg.includes('d="' + geometry.path + '"'), edge.id + " route is missing");
+    });
+  }
 });

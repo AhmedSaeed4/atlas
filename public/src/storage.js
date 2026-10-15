@@ -1,5 +1,6 @@
 import { SAMPLE_GRAPHS } from "./samples.js";
-const STORAGE_KEY = "project-atlas-library-v1";
+export const LIBRARY_STORAGE_KEY = "project-atlas-library-v1";
+const STORAGE_KEY = LIBRARY_STORAGE_KEY;
 const REQUEST_FLOW_NAME = "Request flow demo";
 const requestFlowIndex = SAMPLE_GRAPHS.findIndex((graph) => graph.project?.name === REQUEST_FLOW_NAME);
 const requestFlowSample = requestFlowIndex >= 0 ? SAMPLE_GRAPHS[requestFlowIndex] : null;
@@ -9,11 +10,13 @@ export function createProjectId() {
   return "atlas-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 9);
 }
 
-export function readLibrary(normalizeGraph) {
+export function readLibrary(normalizeGraph, { storage } = {}) {
   let rawBackup = "";
+  let target;
   try {
-    rawBackup = localStorage.getItem(STORAGE_KEY) || "";
-    if (rawBackup === "") return { projects: [], activeId: "", writable: true, error: "", rawBackup: "" };
+    target = storage === undefined ? globalThis.localStorage : storage;
+    rawBackup = target.getItem(STORAGE_KEY) || "";
+    if (rawBackup === "") return { projects: [], activeId: "", writable: true, error: "", rawBackup: "", snapshot: rawBackup };
     const parsed = JSON.parse(rawBackup);
     if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.projects)) {
       throw new Error("Saved project data is not in a format this version can read.");
@@ -38,23 +41,23 @@ export function readLibrary(normalizeGraph) {
       if (projectIds.has(project.id)) throw new Error("Saved project library contains duplicate project IDs.");
       projectIds.add(project.id);
     }
-    return { projects, activeId: String(parsed.activeId || ""), writable: true, error: "", rawBackup: "" };
+    return { projects, activeId: String(parsed.activeId || ""), writable: true, error: "", rawBackup: "", snapshot: rawBackup };
   } catch (error) {
     if (!rawBackup) {
-      try { rawBackup = localStorage.getItem(STORAGE_KEY) || ""; } catch {}
+      try { rawBackup = target?.getItem(STORAGE_KEY) || ""; } catch {}
     }
     return {
       projects: null, activeId: null, writable: false,
       error: error instanceof Error ? error.message : "Browser storage is unavailable.",
-      rawBackup,
+      rawBackup, snapshot: rawBackup,
     };
   }
 }
 
-export function writeLibrary(projects, activeId) {
+export function writeLibrary(projects, activeId, { storage } = {}) {
   try {
     const payload = { version: 1, activeId, projects };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    (storage === undefined ? globalThis.localStorage : storage).setItem(STORAGE_KEY, JSON.stringify(payload));
     return { ok: true, error: "" };
   } catch (error) {
     const quota = error && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED");
@@ -67,9 +70,9 @@ export function writeLibrary(projects, activeId) {
   }
 }
 
-export function clearLibrary() {
+export function clearLibrary({ storage } = {}) {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    (storage === undefined ? globalThis.localStorage : storage).removeItem(STORAGE_KEY);
     return { ok: true, error: "" };
   } catch {
     return { ok: false, error: "This browser blocked local storage, so saved data could not be cleared." };
