@@ -29,6 +29,7 @@ import { initLocalMapTip } from "./local-map-tip.js";
 import { createActionGate, startButtonProgress } from "./action-feedback.js";
 import { createChoicePicker } from "./choice-picker.js";
 import { createSidebarDrawer } from "./sidebar-drawer.js";
+import { createGraphFullscreen } from "./graph-fullscreen.js";
 import { createEditHistory, editHistoryShortcut } from "./edit-history.js";
 import { canImportArchitecture, createCloudImportController } from "./cloud-import.js";
 import { admissionRequiresConfirmation, associationWorkspaceId, findPendingAdmissionAssociation, localProjectForWorkspaceAssociation, workspaceForLocalAssociation, writeOwnerAssociation } from "./cloud-associations.js";
@@ -263,6 +264,29 @@ const localMapTip = initLocalMapTip({
 const sidebarDrawer = createSidebarDrawer({
   sidebar: byId("sidebar"), main: byId("workspace-main"), trigger: byId("mobile-menu"),
   backdrop: byId("sidebar-backdrop"), closeButton: byId("sidebar-close"), onChange: () => localMapTip.refresh(),
+});
+const graphFullscreen = createGraphFullscreen({
+  toggle: byId("graph-fullscreen"),
+  beforeEnter: () => {
+    sidebarDrawer.setOpen(false);
+    libraryPicker.close();
+    hideGraphContextMenu();
+    byId("export-menu").hidden = true;
+  },
+  captureView: () => {
+    stopFitAnimation();
+    return { projectId: activeProject()?.id || "", viewMode, width: innerWidth, height: innerHeight, transform: { ...transform } };
+  },
+  onChange: (active, previous) => {
+    if (!active) applyInspectorWidth(inspectorExpanded ? currentInspectorLimits().max : inspectorPreferredWidth, { expanded: inspectorExpanded });
+    if (!active && previous.projectId === (activeProject()?.id || "") && previous.viewMode === viewMode
+        && previous.width === innerWidth && previous.height === innerHeight) {
+      stopFitAnimation();
+      transform = { ...previous.transform };
+      setViewportTransform();
+    } else fitGraph(false);
+    localMapTip.refresh();
+  },
 });
 const emptyGraph = () => ({ schemaVersion: 1, project: { name: "No project selected", description: "", type: "Software project" }, nodes: [], edges: [] });
 const currentGraph = () => activeProject()?.graph || emptyGraph();
@@ -5090,10 +5114,12 @@ function attachEvents() {
       event.preventDefault();
       openImport();
     } else if (event.key === "Escape") {
-      if (dragState?.kind === "connection") cancelActiveConnection();
+      if (event.defaultPrevented || document.querySelector("dialog[open]")) return;
+      if (dragState?.kind === "connection") { event.preventDefault(); cancelActiveConnection(); return; }
       const menu = byId("graph-context-menu");
-      if (!menu.hidden) { event.preventDefault(); hideGraphContextMenu({ restoreFocus: true }); }
-      byId("export-menu").hidden = true;
+      if (!menu.hidden) { event.preventDefault(); hideGraphContextMenu({ restoreFocus: true }); return; }
+      if (!byId("export-menu").hidden) { event.preventDefault(); byId("export-menu").hidden = true; return; }
+      graphFullscreen.handleKeydown(event);
     }
   });
   document.addEventListener("visibilitychange", () => {

@@ -12,6 +12,7 @@
     <link rel="icon" type="image/svg+xml" sizes="any" href="./favicon.svg">
     <link rel="stylesheet" href="./styles.css">
     <link rel="stylesheet" href="./theme.css">
+    <link rel="stylesheet" href="./graph-fullscreen.css">
   </head>
   <body>
     <div class="app-shell">
@@ -78,8 +79,8 @@
 
         <section class="graph-workspace">
           <div class="graph-stage" id="graph-stage">
-            <div class="canvas-caption"><span class="live-dot"></span> ARCHITECTURE MAP <span class="caption-sep">/</span> <span id="node-count">0 components</span></div>
-            <div class="graph-view-tabs" role="group" aria-label="Architecture view"><button id="show-map" type="button" aria-pressed="true">Map</button><button id="show-timeline" type="button" aria-pressed="false">Timeline</button></div>
+            <div class="canvas-caption"><span class="live-dot"></span><span class="canvas-title">ARCHITECTURE MAP</span><span class="caption-sep">/</span><span id="node-count">0 components</span></div>
+            <div class="graph-view-controls"><div class="graph-view-tabs" role="group" aria-label="Architecture view"><button id="show-map" type="button" aria-pressed="true">Map</button><button id="show-timeline" type="button" aria-pressed="false">Timeline</button></div><button class="graph-fullscreen-toggle" id="graph-fullscreen" type="button" aria-label="Enter full screen graph" aria-pressed="false" aria-controls="workspace-main" title="Expand graph to full screen"><svg class="ui-icon fullscreen-enter-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M12 3h5v5m0-5-6 6M8 17H3v-5m0 5 6-6"/></svg><svg class="ui-icon fullscreen-exit-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M16 4l-5 5m0-5v5h5M4 16l5-5m-5 0h5v5"/></svg><span class="visually-hidden" data-fullscreen-label>Full screen</span></button></div>
             <svg id="graph" class="graph-svg" role="group" aria-label="Interactive software architecture graph" tabindex="0"><g id="viewport"><g id="edges-layer"></g><g id="nodes-layer"></g><path id="connection-preview" class="connection-preview" d="" hidden/></g></svg>
             <div class="timeline-host" id="timeline-view" hidden></div>
             <div class="empty-state" id="empty-state" hidden><div class="empty-icon">A</div><h2 id="empty-state-title">Start with an empty workspace</h2><p id="empty-state-copy">Add a project, import an agent-generated map, or copy the agent prompt from the page header.</p><div class="empty-state-actions"><button class="button primary" id="empty-state-create" type="button" data-empty-create>Add project</button><button class="button secondary" type="button" data-empty-import>Import JSON map</button></div></div>
