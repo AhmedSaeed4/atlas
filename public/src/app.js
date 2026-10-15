@@ -82,6 +82,7 @@ let inspectorWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorPreferredWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorRestoreWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorExpanded = false;
+let fullscreenInspectorExpanded = false;
 let inspectorResizePointer = null;
 const importReadGate = createRevisionGate();
 const droppedFileGate = createRevisionGate();
@@ -285,6 +286,8 @@ const graphFullscreen = createGraphFullscreen({
       transform = { ...previous.transform };
       setViewportTransform();
     } else fitGraph(false);
+    fullscreenInspectorExpanded = false;
+    renderInspector();
     localMapTip.refresh();
   },
 });
@@ -394,6 +397,33 @@ function inspectorWorkspaceWidth() {
 function currentInspectorLimits() {
   return inspectorWidthLimits(inspectorWorkspaceWidth());
 }
+function refreshFullscreenInspector(hasDetails) {
+  const active = graphFullscreen.isActive();
+  if (hasDetails === undefined) {
+    const graph = currentGraph();
+    hasDetails = graph.nodes.some(node => node.id === selectedNodeId)
+      || (isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)
+        && graph.edges.some(edge => edge.id === selectedEdgeId));
+  }
+  const inspector = byId("inspector");
+  const open = active && hasDetails;
+  document.documentElement.classList.toggle("graph-inspector-open", open);
+  document.documentElement.classList.toggle("graph-inspector-wide", active && fullscreenInspectorExpanded);
+  if (active && !open && inspector.contains(document.activeElement)) {
+    byId(viewMode === "timeline" ? "show-timeline" : "graph").focus({ preventScroll: true });
+  }
+  inspector.inert = active && !open;
+  const closeButton = byId("close-inspector");
+  closeButton.setAttribute("aria-label", active ? "Close component details" : "Clear selection");
+  closeButton.title = active ? "Close component details" : "Clear selection";
+  if (!active) return;
+  const expandButton = byId("expand-inspector");
+  const label = fullscreenInspectorExpanded ? "Restore details width" : "Expand details";
+  expandButton.setAttribute("aria-label", label);
+  expandButton.title = label;
+  expandButton.setAttribute("aria-expanded", String(fullscreenInspectorExpanded));
+  expandButton.disabled = !fullscreenInspectorExpanded && inspectorWorkspaceWidth() <= 380;
+}
 function applyInspectorWidth(value, { persist = false, expanded = false } = {}) {
   const workspace = document.querySelector(".graph-workspace");
   const limits = currentInspectorLimits();
@@ -423,6 +453,7 @@ function applyInspectorWidth(value, { persist = false, expanded = false } = {}) 
       inspectorPreferredWidth = inspectorWidth;
     }
   }
+  if (graphFullscreen.isActive()) refreshFullscreenInspector();
   return inspectorWidth;
 }
 
@@ -473,6 +504,11 @@ function bindInspectorResize() {
     fitGraph(false);
   });
   byId("expand-inspector").addEventListener("click", () => {
+    if (graphFullscreen.isActive()) {
+      fullscreenInspectorExpanded = !fullscreenInspectorExpanded;
+      refreshFullscreenInspector();
+      return;
+    }
     const limits = currentInspectorLimits();
     if (inspectorExpanded) {
       applyInspectorWidth(inspectorRestoreWidth, { persist: true });
@@ -2943,9 +2979,11 @@ function renderTouchEdgeInspector(edge, container) {
 }
 function renderInspector() {
   const container = byId("inspector-content");
-  container.replaceChildren();
   const graph = currentGraph();
   const node = graph.nodes.find((item) => item.id === selectedNodeId);
+  refreshFullscreenInspector(Boolean(node) || (isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)
+    && graph.edges.some(edge => edge.id === selectedEdgeId)));
+  container.replaceChildren();
   byId("add-edge").disabled = graph.nodes.length < 1 || !canMutateCurrent();
   if (!node && isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)) {
     const edge = graph.edges.find((item) => item.id === selectedEdgeId);
@@ -4901,8 +4939,10 @@ function attachEvents() {
   });
   byId("close-inspector").addEventListener("click", () => {
     selectedNodeId = null;
+    if (graphFullscreen.isActive()) { selectedEdgeId = null; touchSelectedEdge = null; }
     renderInspector();
     refreshTraceStyles();
+    refreshEdgeSelection();
   });
   byId("search").addEventListener("input", (event) => {
     searchTerm = event.target.value.trim().toLowerCase();
@@ -5020,6 +5060,16 @@ function attachEvents() {
   document.addEventListener("visibilitychange", updateWorkspaceLoadingUi);
   byId("project-list").addEventListener("click", (event) => {
     if (event.target.closest(".project-row")) sidebarDrawer.setOpen(false);
+  });
+
+  byId("timeline-view").addEventListener("click", (event) => {
+    if (!graphFullscreen.isActive() || event.button !== 0 || (!selectedNodeId && !selectedEdgeId)) return;
+    if (event.target.closest?.(".timeline-node-card, button, a, input, textarea, select, summary, [contenteditable]")) return;
+    selectedNodeId = null;
+    selectedEdgeId = null;
+    touchSelectedEdge = null;
+    renderInspector();
+    renderGraph();
   });
 
   const graphSvg = byId("graph");

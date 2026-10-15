@@ -32,7 +32,6 @@ html.graph-fullscreen { scrollbar-gutter: auto; }
 .graph-fullscreen .topbar,
 .graph-fullscreen .page-heading,
 .graph-fullscreen .statusbar,
-.graph-fullscreen .inspector,
 .graph-fullscreen .inspector-resize,
 .graph-fullscreen .local-map-tip { display: none; }
 
@@ -45,6 +44,15 @@ html.graph-fullscreen { scrollbar-gutter: auto; }
 .graph-fullscreen .toolbar .filter-group { order: 3; flex: 0 0 100%; min-width: 0; max-width: 100%; flex-wrap: nowrap; }
 .graph-fullscreen .graph-workspace { flex: 1 1 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 0; min-height: 0; padding: 0 12px 12px; overflow: hidden; }
 .graph-fullscreen .graph-stage { height: 100%; min-height: 0; border-radius: 16px; }
+
+/* Selection details float above the graph without taking a grid column. */
+.graph-fullscreen .graph-workspace { position: relative; }
+.graph-fullscreen .inspector { position: absolute; display: flex; top: 52px; right: 22px; bottom: 64px; z-index: 12; width: min(360px, calc(100% - 44px)); height: auto; min-height: 0; max-height: none; border-radius: 18px; box-shadow: 0 16px 32px rgb(0 0 0 / .18); opacity: 0; visibility: hidden; pointer-events: none; transform: translateX(calc(100% + 24px)); transition: transform 220ms cubic-bezier(.22, .8, .25, 1), opacity 160ms ease, width 200ms ease, visibility 0s linear 220ms; }
+.graph-fullscreen.graph-inspector-open .inspector { opacity: 1; visibility: visible; pointer-events: auto; transform: translateX(0); transition-delay: 0s; }
+.graph-fullscreen.graph-inspector-wide .inspector { width: min(640px, calc(100% - 44px)); }
+@media (prefers-reduced-motion: reduce) {
+  .graph-fullscreen .inspector { transition: none; }
+}
 
 @media (max-height: 480px) {
   .graph-fullscreen .toolbar { padding-block: 6px; }
