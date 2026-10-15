@@ -18,6 +18,7 @@ import { INSPECTOR_DEFAULT_WIDTH, clampInspectorWidth, inspectorWidthLimits, isN
 import { branchEdgeCandidate, canStartPointerGesture, connectionPreviewPath, nodeContextIsCurrent, screenToWorld } from "./refinement-graph.js";
 import { isCurrentTouchEdgeSelection, isTouchClick, scrollTypeFiltersWithWheel, transitionTypeInteractions } from "./filter-interaction.js";
 import { workspaceLoadingPresentation } from "./workspace-loading.js";
+import { createWorkspaceNavigation } from "./workspace-navigation.js";
 import { workspaceActionAvailability, workspaceReadSnapshotIsCurrent, isSharedViewer, isCurrentSaveRetry } from "./workspace-actions.js";
 import { createCloudUiController, onlineViewIdFromSearch, resetOnlineLibraryForIdentityChange } from "./cloud-ui.js";
 import { clearOnlineOwnerDraftIfMatches, readOnlineOwnerDraft, readOnlineOwnerDraftForOwnerEdit, writeOnlineOwnerDraft } from "./online-drafts.js";
@@ -94,6 +95,13 @@ let transform = { x: 0, y: 0, scale: 1 };
 let viewMode = "graph";
 const CLOUD_ASSOCIATIONS_KEY = "atlas.online.associations.v1";
 const onlineStorage = (() => { try { return window.localStorage; } catch { return null; } })();
+const workspaceNavigation = createWorkspaceNavigation({
+  storage: onlineStorage,
+  tabStorage: (() => { try { return window.sessionStorage; } catch { return null; } })(),
+  restore: !new URLSearchParams(location.search).has("view")
+    && !location.hash.startsWith("#map=") && !isFlowExampleRoute(location.search, location.hash),
+});
+const initialWorkspaceNavigation = workspaceNavigation.initial;
 const accountSession = getSharedAccountSession();
 const cloudImportController = createCloudImportController({
   account: accountSession, storage: onlineStorage,
@@ -107,14 +115,16 @@ const readCloudAssociations = () => {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   } catch { return {}; }
 };
-let cloudAssociations = readCloudAssociations();let onlineRoute = new URLSearchParams(location.search).has("view");
-let onlineWorkspaceOpen = false;
-let workspaceLoadingTarget = "";
+let cloudAssociations = readCloudAssociations();
+let onlineRoute = new URLSearchParams(location.search).has("view");
+let onlineWorkspaceOpen = initialWorkspaceNavigation.library === "cloud" && Boolean(initialWorkspaceNavigation.workspaceId);
+let workspaceResumeLoading = onlineWorkspaceOpen;
+let workspaceLoadingTarget = workspaceResumeLoading ? initialWorkspaceNavigation.workspaceId : "";
 let onlineGraphProject = null;
 let onlineWorkspace = null;
 let onlineState = { enabled: false, mode: "local", canEdit: false, canDelete: false, status: "local", routeUnavailable: false };
 const onlineLibraryCache = { snapshot: null, status: "Sign in to load your online map library." };
-let libraryMode = onlineRoute ? "cloud" : "local";
+let libraryMode = onlineRoute ? "cloud" : initialWorkspaceNavigation.library;
 const librarySelect = byId("workspace-library-select");
 const libraryPicker = createChoicePicker({ value: libraryMode, label: "Workspace library", classPrefix: "workspace-switcher",
   choices: [{ value: "local", label: "Local Workspace" }, { value: "cloud", label: "Cloud Workspace" }],
@@ -159,7 +169,7 @@ const mapSettingsController = createMapSettingsTargetController({
 });
 let ownerDraftStorageWarningShown = false;
 let onlineCurrentLink = "";
-let onlineTargetWorkspaceId = "";
+let onlineTargetWorkspaceId = workspaceLoadingTarget;
 let onlinePendingUpload = null;
 let onlineUiUnavailable = false;
 let currentMapAdmissionContext = null;
@@ -223,6 +233,7 @@ const writeWorkspaceAssociation = (projectId, workspaceId, ownerUid = effectiveA
   saveCloudAssociations();
 };
 const removeWorkspaceAssociation = (workspaceId, ownerUid = effectiveAccountUid()) => {
+  workspaceNavigation.forgetWorkspace(ownerUid, String(workspaceId));
   mapAdmissionController.forget({ workspaceId, ownerUid });
   for (const [projectId, record] of Object.entries(cloudAssociations)) {
     if (associationWorkspaceId(record) === workspaceId) delete cloudAssociations[projectId];
@@ -527,9 +538,35 @@ function bindInspectorResize() {
     });
   }, { passive: true });
 }
+function cancelWorkspaceRestore() {
+  workspaceNavigation.cancelRestore();
+  workspaceResumeLoading = false;
+}
+function updateWorkspaceRestoreAccount(accountState) {
+  if (!workspaceNavigation.hasPending() || libraryMode !== "cloud" || onlineRoute) return;
+  if (accountState.status === "error") {
+    handleOnlineUnavailable({ message: "Your last cloud workspace could not be reopened because your account could not be checked. Retry to try again." });
+    return;
+  }
+  if (accountState.status !== "ready") return;
+  const result = workspaceNavigation.accountReady(String(accountState.user?.uid || ""));
+  if (result?.status === "waiting") {
+    workspaceResumeLoading = true;
+    workspaceLoadingTarget = workspaceNavigation.snapshot().workspaceId;
+    onlineTargetWorkspaceId = workspaceLoadingTarget;
+    onlineWorkspaceOpen = true;
+    onlineUiUnavailable = false;
+    renderAll();
+  } else if (result?.status === "signed-out") {
+    handleOnlineUnavailable({ message: "Sign in to reopen your last cloud workspace, or choose Local Workspace." });
+  } else if (result?.status === "mismatch") {
+    handleOnlineUnavailable({ message: "Your last cloud workspace belongs to another account. Choose a map from this account's Cloud Workspace, or switch to Local Workspace." });
+  }
+}
 function handleOnlineState(state) {
   const previousHistoryScope = editHistoryScope();
   const previousWorkspaceId = onlineState.workspaceId || "";
+  const previousStatus = onlineState.status;
   const previousUid = onlineState.userUid || "";
   const libraryIdentityChanged = resetOnlineLibraryForIdentityChange(onlineLibraryCache, previousUid, state.userUid);
   const previousCanEdit = onlineState.canEdit;
@@ -545,7 +582,8 @@ function handleOnlineState(state) {
   if (state.workspace) onlineWorkspace = state.workspace;
   const lostPrivateWorkspaceAuthority = Boolean(onlineWorkspaceOpen && state.workspace && !state.workspace.shared && state.ownerUid && state.userUid !== state.ownerUid);
   if (lostPrivateWorkspaceAuthority) handleOnlineUnavailable({ status: "permission-denied", message: "This private online map is only available to its owner." });
-  const closedOwnerContext = onlineWorkspaceOpen && !onlineRoute && !state.inOnlineRoute && ["signed-out", "disabled"].includes(state.status);
+  const closedOwnerContext = onlineWorkspaceOpen && !onlineRoute && !workspaceNavigation.hasPending()
+    && !state.inOnlineRoute && ["signed-out", "disabled"].includes(state.status);
   if (state.inOnlineRoute) onlineWorkspaceOpen = true;
   if (closedOwnerContext) { onlineWorkspaceOpen = false; onlineWorkspace = null; onlineGraphProject = null; onlineCurrentLink = ""; }
   if (lostEditAuthority) {
@@ -558,11 +596,13 @@ function handleOnlineState(state) {
   }
   updateOnlineUi();
   updateWorkspaceActionAvailability();
+  if (previousStatus !== state.status) updateProjectHeader();
   if (closedOwnerContext) renderAll();
   else if (modeChanged) { renderInspector(); localRecoveryMode(); }
   if (byId("map-settings-dialog")?.open) renderMapSettings();
 }
 function handleOnlineWorkspaceLoading(event) {
+  workspaceResumeLoading = false;
   workspaceLoadingTarget = String(event.workspaceId || "");
   onlineWorkspaceOpen = true;
   onlineUiUnavailable = false;
@@ -574,7 +614,9 @@ function handleOnlineWorkspaceLoading(event) {
   selectedEdgeId = null;
   onlineRoute = onlineRoute || Boolean(event.shared);
   byId("online-route-title").textContent = "Opening online workspace";
-  byId("online-route-message").textContent = "Loading the shared map. Your local maps remain separate.";
+  byId("online-route-message").textContent = event.shared
+    ? "Loading the shared map. Your local maps remain separate."
+    : "Loading your cloud workspace.";
   renderAll();
 }
 function handleOnlineWorkspacePreview(preview) {
@@ -606,6 +648,7 @@ function handleOnlineWorkspacePreview(preview) {
 function handleOnlineWorkspace(result) {
   const workspace = result.workspace;
   if (!workspace?.id || !result.graph) return;
+  workspaceResumeLoading = false;
   workspaceLoadingTarget = "";
   onlineWorkspaceOpen = true;
   onlineUiUnavailable = false;
@@ -621,6 +664,9 @@ function handleOnlineWorkspace(result) {
   if (result.apply !== false) editHistory.sync(editHistoryScope(), graph);
   onlineRoute = onlineRoute || (onlineController.state().inOnlineRoute && Boolean(onlineController.state().sharedId));
   onlineWorkspaceOpen = true;
+  if (!onlineRoute && result.mode === "owner" && String(workspace.ownerId || "") === currentAccountUid()) {
+    workspaceNavigation.rememberCloud(currentAccountUid(), workspace.id);
+  }
   if (firstLoad) {
     selectedNodeId = null;
     selectedEdgeId = null;
@@ -644,6 +690,10 @@ function handleOnlineWorkspaceStatus(event) {
   byId("save-status").textContent = event?.status === "offline" ? "Online view offline" : message;
 }
 function handleOnlineUnavailable(event) {
+  workspaceResumeLoading = false;
+  if (["deleted", "not-found"].includes(event?.status) && !onlineRoute) {
+    workspaceNavigation.forgetWorkspace(currentAccountUid(), onlineTargetWorkspaceId);
+  }
   editHistory.forget(editHistoryScope());
   workspaceLoadingTarget = "";
   onlineWorkspaceOpen = true;
@@ -656,9 +706,11 @@ function handleOnlineUnavailable(event) {
   selectedNodeId = null;
   selectedEdgeId = null;
   renderAll();
+  updateOnlineUi();
   byId("save-status").textContent = "Online map unavailable";
 }
 function handleOnlineWorkspaceCreated(event) {
+  workspaceResumeLoading = false;
   workspaceLoadingTarget = "";
   onlineUiUnavailable = false;
   const workspace = event.workspace;
@@ -667,6 +719,7 @@ function handleOnlineWorkspaceCreated(event) {
   onlineWorkspace = { ...workspace };
   onlineTargetWorkspaceId = workspace.id;
   onlineRoute = false;
+  if (String(workspace.ownerId || "") === currentAccountUid()) workspaceNavigation.rememberCloud(currentAccountUid(), workspace.id);
   onlineGraphProject = {
     id: "online-" + workspace.id,
     graph: event.graph ? normalizeGraph(event.graph, { allowEmpty: true }) : emptyGraph(),
@@ -1126,6 +1179,7 @@ async function retryAutosaveAdmission() {
   }
 }
 function handleOnlineWorkspaceDeleted(event) {
+  workspaceResumeLoading = false;
   editHistory.forget(editHistoryScope());
   workspaceLoadingTarget = "";
   onlineUiUnavailable = false;
@@ -1141,6 +1195,7 @@ function handleOnlineWorkspaceDeleted(event) {
   renderAll();
 }
 function handleOnlineWorkspaceClosed() {
+  workspaceResumeLoading = false;
   workspaceLoadingTarget = "";
   onlineUiUnavailable = false;
   onlineWorkspaceOpen = false;
@@ -1160,6 +1215,19 @@ function handleOnlineLibrary(result) {
         : result?.status === "offline" ? "Offline. Showing the last available online map list."
           : onlineErrorMessage(libraryError, "library");
   updateOnlineLibrarySnapshot(onlineLibraryCache, result);
+  if (libraryMode === "cloud" && !onlineRoute && workspaceNavigation.hasPending()) {
+    const restore = workspaceNavigation.resolveRestore({
+      ownerUid: currentAccountUid(), status: result?.status, workspaces: result?.workspaces,
+    });
+    if (restore?.status === "restore") {
+      workspaceResumeLoading = false;
+      void openOwnedOnlineWorkspace(restore.item);
+    } else if (restore?.status === "missing") {
+      handleOnlineUnavailable({ message: "Your last cloud workspace is no longer available. Choose another cloud map, or switch to Local Workspace." });
+    } else if (["offline", "error", "permission-denied", "unauthenticated"].includes(result?.status)) {
+      handleOnlineUnavailable({ message: onlineLibraryCache.status });
+    }
+  }
   renderLibrary();
   if (result?.status === "ready") selectFirstCloudWorkspace();
 }
@@ -1290,7 +1358,7 @@ function handleOnlineError(error, action = "workspace operation") {
 }
 function currentWorkspaceLoadingPresentation() {
   return workspaceLoadingPresentation({
-    online: isOnlineSession(), status: onlineState.status,
+    online: isOnlineSession(), status: workspaceResumeLoading ? "loading" : onlineState.status,
     navigationPending: Boolean(workspaceLoadingTarget && workspaceLoadingTarget === (onlineState.workspaceId || onlineTargetWorkspaceId)),
     unavailable: Boolean(onlineState.routeUnavailable || onlineUiUnavailable),
     workspaceId: onlineState.workspaceId || onlineTargetWorkspaceId,
@@ -1361,7 +1429,7 @@ function updateOnlineUi() {
   if (reloadSave && !retryPending) reloadSave.hidden = state.status !== "conflict" && !(state.status === "offline" && state.workspace);
   if (reloadSave) reloadSave.disabled = Boolean(retryPending);
   const reloadOnline = byId("reload-online");
-  if (reloadOnline) reloadOnline.hidden = !(openSession && (state.status === "offline" || state.status === "error" || state.routeUnavailable));
+  if (reloadOnline) reloadOnline.hidden = !(openSession && (state.status === "offline" || state.status === "error" || state.routeUnavailable || onlineUiUnavailable));
   const returnLocal = byId("return-local");
   if (returnLocal) returnLocal.hidden = !visibility.returnLocal;
   const routeBanner = byId("online-route-banner");
@@ -1383,7 +1451,10 @@ function updateOnlineUi() {
   }
   if (openSession && state.status === "loading") byId("save-status").textContent = onlineGraphProject ? "Checking access · read-only" : "Opening cloud map…";
   const workspaceModeLabel = byId("workspace-mode-label");
-  if (workspaceModeLabel) workspaceModeLabel.textContent = openSession ? (state.canEdit ? "Owner - online" : "Read-only - online") : "Local workspace";
+  if (workspaceModeLabel) workspaceModeLabel.textContent = !openSession ? "Local workspace"
+    : onlineUiUnavailable || state.routeUnavailable ? "Cloud workspace unavailable"
+      : workspaceResumeLoading ? "Opening cloud workspace"
+        : state.mode === "owner" && state.canEdit ? "Owner - online" : "Read-only - online";
   renderLibrary();
   updateActionSaveStatus();
 }
@@ -1440,10 +1511,10 @@ function renderCloudLibrary() {
   const uid = currentAccountUid();
   if (!uid) {
     const state = accountSession.getState();
-    const message = state.status === "error"
-      ? "Cloud Workspace could not check your account. Retry to try again."
+    const message = state.status === "initializing" ? "Restoring your account for Cloud Workspace..."
+      : state.status === "error" ? "Cloud Workspace could not check your account. Retry to try again."
       : "Sign in with Google to see your Cloud Workspace maps. Signing in does not move local maps.";
-    setCloudLibraryState(message, state.status === "error", false);
+    setCloudLibraryState(message, state.status === "error", state.status === "initializing");
     mapSettingsController.invalidate();
     return;
   }
@@ -2103,9 +2174,16 @@ function selectFirstCloudWorkspace() {
   });
   if (item) void openOwnedOnlineWorkspace(item);
 }
-function selectLibraryMode(mode, { selectFirst = false } = {}) {
+function selectLibraryMode(mode, { selectFirst = false, restore = false } = {}) {
   if (!["local", "cloud"].includes(mode)) return;
-  if (selectFirst && mode === "local" && isOnlineSession() && !returnToLocalWorkspace()) { renderLibrary(); return; }
+  if (mode === "local" && isOnlineSession() && !returnToLocalWorkspace()) { renderLibrary(); return; }
+  if (!restore) {
+    cancelWorkspaceRestore();
+    if (!onlineRoute) {
+      if (mode === "cloud") workspaceNavigation.rememberCloudLibrary(currentAccountUid());
+      else workspaceNavigation.rememberLocal();
+    }
+  }
   const request = ++cloudLibraryRequest;
   cloudLibraryFirstSelection.cancel();
   const selection = selectFirst && mode === "cloud" ? cloudLibraryFirstSelection.begin() : null;
@@ -2120,6 +2198,7 @@ function selectLibraryMode(mode, { selectFirst = false } = {}) {
       const state = await accountSession.initialize();
       if (request !== cloudLibraryRequest || libraryMode !== "cloud") return;
       onlineController.syncAccountUser?.(state.user || null);
+      updateWorkspaceRestoreAccount(state);
       if (!state.user?.uid) {
         onlineLibraryCache.snapshot = null;
         onlineLibraryCache.status = "Sign in with Google to see your Cloud Workspace maps. Local maps remain separate.";
@@ -2133,6 +2212,7 @@ function selectLibraryMode(mode, { selectFirst = false } = {}) {
     } catch (error) {
       if (request !== cloudLibraryRequest || libraryMode !== "cloud") return;
       onlineLibraryCache.status = onlineErrorMessage(error, "library");
+      if (workspaceNavigation.hasPending()) handleOnlineUnavailable({ message: onlineLibraryCache.status });
       renderLibrary();
     }
   })();
@@ -2145,6 +2225,7 @@ function retryCloudLibrary() {
     try {
       const state = await accountSession.initialize();
       onlineController.syncAccountUser?.(state.user || null);
+      updateWorkspaceRestoreAccount(state);
       if (!state.user?.uid) {
         onlineLibraryCache.status = "Sign in with Google to see your Cloud Workspace maps.";
         renderLibrary();
@@ -2153,6 +2234,7 @@ function retryCloudLibrary() {
       if (!onlineController.retryLibrary()) await onlineController.browseLibrary();
     } catch (error) {
       onlineLibraryCache.status = onlineErrorMessage(error, "library");
+      if (workspaceNavigation.hasPending()) handleOnlineUnavailable({ message: onlineLibraryCache.status });
       renderLibrary();
     }
   })();
@@ -2165,17 +2247,23 @@ async function openOwnedOnlineWorkspace(item) {
     return;
   }
   if (!preserveDirtyOwnerDraftForNavigation()) return;
+  cancelWorkspaceRestore();
+  cancelPendingShareLoad();
   closeMapSettings();
+  const navigationRequest = cloudLibraryRequest;
   const current = onlineController.state();
   if (current.workspaceId === item.id && !current.routeUnavailable && !["offline", "error"].includes(current.status)) return;
   try {
     onlineRoute = false;
     focusedType = ""; lockedType = ""; touchInteractionActive = false;
     await onlineController.openOwnedWorkspace(item.id, { localProjectId: associationForWorkspace(item.id) });
+    if (navigationRequest !== cloudLibraryRequest || currentAccountUid() !== uid
+        || onlineRoute || onlineTargetWorkspaceId !== item.id) return;
     onlineWorkspaceOpen = true;
-    if (new URLSearchParams(location.search).has("view")) {
+    if (new URLSearchParams(location.search).has("view") || location.hash.startsWith("#map=")) {
       const next = new URL(location.href);
       next.searchParams.delete("view");
+      if (next.hash.startsWith("#map=")) next.hash = "";
       history.replaceState(history.state, "", next.pathname + next.search + next.hash);
     }
   } catch (error) { handleOnlineError(error); }
@@ -2220,6 +2308,7 @@ async function checkLocalCloudReference(projectId, workspaceId, isCurrent = () =
   return result;
 }
 async function reloadOnlineWorkspace() {
+  if (workspaceNavigation.hasPending() && libraryMode === "cloud" && !onlineRoute) { retryCloudLibrary(); return; }
   const state = onlineController.state();
   try {
     if (onlineRoute) {
@@ -2250,6 +2339,9 @@ async function reloadOnlineWorkspace() {
 }
 function returnToLocalWorkspace() {
   if (!preserveDirtyOwnerDraftForNavigation()) return false;
+  cancelWorkspaceRestore();
+  workspaceNavigation.rememberLocal();
+  workspaceLoadingTarget = "";
   cloudLibraryFirstSelection.cancel();
   cloudLibraryRequest += 1;
   focusedType = ""; lockedType = ""; touchInteractionActive = false;
@@ -2280,7 +2372,7 @@ function localRecoveryMode() {
   if (isOnlineSession()) {
     const state = onlineController.state();
     const staleViewerLoading = state.status === "loading" && Boolean(onlineGraphProject) && state.mode === "viewer";
-    const label = onlineUiUnavailable || state.routeUnavailable ? "Online map unavailable"
+    const label = workspaceResumeLoading ? "Opening cloud map..." : onlineUiUnavailable || state.routeUnavailable ? "Online map unavailable"
       : staleViewerLoading ? "Checking access · read-only"
         : state.status === "loading" ? "Opening cloud map…"
         : state.status === "offline" ? (onlineGraphProject ? "Online view offline" : "Online map offline")
@@ -2373,6 +2465,7 @@ function persist(showFailure = true) {
   }
   const result = writeLibrary(projects, activeId);
   if (result.ok) {
+    workspaceNavigation.rememberLocal();
     byId("save-status").textContent = "Saved locally";
     lastStorageError = "";
     return true;
@@ -2393,14 +2486,15 @@ function makeProject(graph, id = createProjectId(), extra = {}) {
 }
 function updateProjectHeader() {
   const project = activeProject();
-  const details = project?.graph.project || (isOnlineSession() && onlineState.status === "loading" ? { name: onlineWorkspace?.name || "Cloud Workspace", type: onlineWorkspace?.projectType || "Software architecture", description: "" } : null);
+  const opening = isOnlineSession() && (workspaceResumeLoading || onlineState.status === "loading");
+  const details = project?.graph.project || (opening ? { name: onlineWorkspace?.name || "Cloud Workspace", type: onlineWorkspace?.projectType || "Software architecture", description: "" } : null);
   byId("breadcrumb-project").textContent = details?.name || "No project";
   byId("project-title").textContent = details?.name || "No project selected";
-  byId("project-description").textContent = isOnlineSession() && onlineState.status === "loading" && !project ? "" : details?.description || "Import a map or create a project to start exploring.";
+  byId("project-description").textContent = opening && !project ? "" : details?.description || "Import a map or create a project to start exploring.";
   byId("project-type").textContent = (details?.type || "SOFTWARE ARCHITECTURE").toUpperCase();
   byId("node-count").textContent = (project?.graph.nodes.length || 0) + " components";
   byId("graph-count-label").textContent = (project?.graph.nodes.length || 0) + " nodes / " + (project?.graph.edges.length || 0) + " edges";
-  byId("status-summary").textContent = isOnlineSession() && onlineState.status === "loading" ? "Opening cloud map…" : project ? "Ready to explore" : "Create a project or import a map";
+  byId("status-summary").textContent = opening ? "Opening cloud map…" : project ? "Ready to explore" : "Create a project or import a map";
 }
 function typeColor() {
   return "var(--atlas-muted)";
@@ -3206,6 +3300,8 @@ function selectProject(id) {
     if (!returnToLocalWorkspace()) return;
   }
   libraryMode = "local";
+  cancelWorkspaceRestore();
+  workspaceNavigation.rememberLocal();
   cancelPendingShareLoad();
   cancelActiveGesture();
   hideGraphContextMenu();
@@ -3555,6 +3651,10 @@ function createProject() {
 }
 function openFlowExample() {
   if (!requireMutation("add a local example")) return;
+  if (isOnlineSession() && !returnToLocalWorkspace()) return;
+  libraryMode = "local";
+  cancelWorkspaceRestore();
+  workspaceNavigation.rememberLocal();
   cancelPendingShareLoad();
   const example = SAMPLE_GRAPHS.find((graph) => graph.project.name === FLOW_EXAMPLE_NAME);
   if (!example) { showToast("The request-flow example is unavailable.", "error"); return; }
@@ -4244,6 +4344,8 @@ function currentImportTab() {
 }
 function prepareImportDialog() {
   if (actionGate.isBusy("import-submit")) { showToast("An import is still finishing. Please wait."); return false; }
+  cancelWorkspaceRestore();
+  updateOnlineUi();
   importDialogContext = { destination: libraryMode, ownerUid: libraryMode === "cloud" ? currentAccountUid() : "" };
   const cloud = importDialogContext.destination === "cloud";
   byId("import-destination-hint").textContent = cloud
@@ -4759,6 +4861,8 @@ async function openIncomingShare() {
     if (incomingShareFailure?.fragment !== fragment) clearIncomingShareFailure();
     return;
   }
+  cancelWorkspaceRestore();
+  updateOnlineUi();
   if (incomingShareFailure && incomingShareFailure.fragment !== fragment) clearIncomingShareFailure();
   try {
     const graph = await decodeShareHash(fragment);
@@ -4766,6 +4870,8 @@ async function openIncomingShare() {
     if (!graph) return;
     const admissionKey = await shareKey(fragment);
     if (!shareLoadTracker.isCurrent(request, location.hash)) return;
+    if (isOnlineSession() && !returnToLocalWorkspace()) return;
+    libraryMode = "local";
     let project = findSharedProject(projects, fragment);
     let createdNow = false;
     if (!project) {
@@ -4837,6 +4943,7 @@ function attachEvents() {
     if (accountState.status === "initializing" && authInitializingInvalidatesMapSettingsTarget(mapSettingsTarget)) mapSettingsController.invalidate();
     if (accountState.status === "ready" || accountState.status === "error") {
       onlineController.syncAccountUser?.(accountState.user || null);
+      updateWorkspaceRestoreAccount(accountState);
       mapSettingsController.invalidate();
       if (accountState.status === "ready" && accountState.user?.uid && libraryMode === "cloud") {
         void onlineController.browseLibrary();
@@ -5206,7 +5313,9 @@ function init() {
     renderAll();
     requestAnimationFrame(() => fitGraph(false));
     void openIncomingShare();
-    if (hasAccountSessionHint()) {
+    if (initialWorkspaceNavigation.library === "cloud") {
+      selectLibraryMode("cloud", { restore: true });
+    } else if (hasAccountSessionHint()) {
       void accountSession.initialize().then((accountState) => {
         onlineController.syncAccountUser?.(accountState.user || null);
         if (accountState.user?.uid) return onlineController.enableOnline();

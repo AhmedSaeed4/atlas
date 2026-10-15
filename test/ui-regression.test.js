@@ -65,7 +65,7 @@ test("sidebar switches libraries in place and exposes a separate scoped settings
   assert.ok(app.includes('if (current) current.hidden = !showCurrent'));
   assert.ok(app.includes('if (routeBanner) routeBanner.hidden = !visibility.banner'));
   assert.ok(app.includes('if (returnLocal) returnLocal.hidden = !visibility.returnLocal'));
-  assert.ok(app.includes('setCloudLibraryState(message, state.status === "error", false)'));
+  assert.ok(app.includes('setCloudLibraryState(message, state.status === "error", state.status === "initializing")'));
   assert.doesNotMatch(app, /Local maps are hidden while this online link is open/);
   assert.ok(app.includes('byId("share-graph").addEventListener("click", () => runButtonAction(byId("share-graph"), "share", "Preparing…", openShareDialog))'));
   assert.ok(app.includes('openMapSettings({ origin: "cloud", id: state.workspaceId, ownerUid: state.userUid })'));
