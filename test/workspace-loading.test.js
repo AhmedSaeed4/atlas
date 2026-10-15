@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { workspaceLoadingPresentation } from "../public/src/workspace-loading.js";
+import { workspaceGraphPresentation, workspaceLoadingPresentation } from "../public/src/workspace-loading.js";
 const pending = { online: true, status: "loading", workspaceId: "a", graphWorkspaceId: "", hasGraph: false };
 test("a first remote load shows skeletons and identifies only its selected row", () => {
   assert.deepEqual(workspaceLoadingPresentation(pending), { busy: true, surface: "skeleton", rowId: "a" });
@@ -28,4 +28,51 @@ test("saving and live ready revisions do not trigger loading presentation", () =
 
 test("background metadata rechecks never restart an already displayed workspace entrance", () => {
   assert.deepEqual(workspaceLoadingPresentation({ ...pending, navigationPending: false, hasGraph: true, graphWorkspaceId: "a" }), { busy: false, surface: "idle", rowId: "" });
+});
+
+const graph = (label = "API") => ({ schemaVersion: 1, project: { name: "Fictional map" }, nodes: [{ id: "api", label, type: "api" }], edges: [] });
+test("a first cloud response uses a fresh graph entrance after an empty loading frame", () => {
+  const incoming = graph();
+  const presentation = workspaceGraphPresentation({ workspaceId: "a", graph: incoming });
+  assert.equal(presentation.firstLoad, true);
+  assert.equal(presentation.preserveGraph, false);
+  assert.equal(presentation.graph, incoming);
+});
+test("server confirmation preserves a matching preview and its running entrance", () => {
+  const preview = { onlineWorkspaceId: "a", cachedPreview: true, graph: graph() };
+  const confirmation = structuredClone(preview.graph);
+  const presentation = workspaceGraphPresentation({ previousProject: preview, workspaceId: "a", graph: confirmation });
+  assert.equal(presentation.firstLoad, false);
+  assert.equal(presentation.preserveGraph, true);
+  assert.equal(presentation.graph, preview.graph);
+});
+test("metadata and repeated ready responses preserve the graph without replaying its entrance", () => {
+  const current = { onlineWorkspaceId: "a", graph: graph() };
+  for (const incoming of [current.graph, structuredClone(current.graph)]) {
+    const presentation = workspaceGraphPresentation({ previousProject: current, workspaceId: "a", graph: incoming });
+    assert.equal(presentation.firstLoad, false);
+    assert.equal(presentation.preserveGraph, true);
+    assert.equal(presentation.graph, current.graph);
+  }
+});
+test("a real live graph update renders new content without restarting navigation animation", () => {
+  const previous = { onlineWorkspaceId: "a", graph: graph() }, incoming = graph("Updated API");
+  const presentation = workspaceGraphPresentation({ previousProject: previous, workspaceId: "a", graph: incoming });
+  assert.equal(presentation.firstLoad, false);
+  assert.equal(presentation.preserveGraph, false);
+  assert.equal(presentation.graph, incoming);
+  assert.equal(previous.graph.nodes[0].label, "API");
+});
+test("switching cloud maps starts an entrance even when the maps have identical contents", () => {
+  const previous = { onlineWorkspaceId: "a", graph: graph() }, incoming = structuredClone(previous.graph);
+  const presentation = workspaceGraphPresentation({ previousProject: previous, workspaceId: "b", graph: incoming });
+  assert.equal(presentation.firstLoad, true);
+  assert.equal(presentation.preserveGraph, false);
+  assert.equal(presentation.graph, incoming);
+});
+test("empty confirmed maps retain their mounted empty view on metadata updates", () => {
+  const empty = { schemaVersion: 1, project: { name: "Empty" }, nodes: [], edges: [] };
+  const presentation = workspaceGraphPresentation({ previousProject: { onlineWorkspaceId: "a", graph: empty }, workspaceId: "a", graph: structuredClone(empty) });
+  assert.equal(presentation.firstLoad, false);
+  assert.equal(presentation.preserveGraph, true);
 });

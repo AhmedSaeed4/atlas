@@ -17,7 +17,7 @@ import { addOrReuseExampleProject, clearLocalDataRoute, clearRejectedShareRoute,
 import { INSPECTOR_DEFAULT_WIDTH, clampInspectorWidth, inspectorWidthLimits, isNamedLinkSnapshotCurrent, namedLinkPayload, readInspectorExpanded, readInspectorWidthPreference, writeInspectorExpanded, writeInspectorWidth, writeNamedLinkClipboard } from "./refinement-ui.js";
 import { branchEdgeCandidate, canStartPointerGesture, connectionPreviewPath, nodeContextIsCurrent, screenToWorld } from "./refinement-graph.js";
 import { isCurrentTouchEdgeSelection, isTouchClick, scrollTypeFiltersWithWheel, transitionTypeInteractions } from "./filter-interaction.js";
-import { workspaceLoadingPresentation } from "./workspace-loading.js";
+import { workspaceGraphPresentation, workspaceLoadingPresentation } from "./workspace-loading.js";
 import { createWorkspaceNavigation } from "./workspace-navigation.js";
 import { workspaceActionAvailability, workspaceReadSnapshotIsCurrent, isSharedViewer, isCurrentSaveRetry } from "./workspace-actions.js";
 import { createCloudUiController, onlineViewIdFromSearch, resetOnlineLibraryForIdentityChange } from "./cloud-ui.js";
@@ -642,6 +642,7 @@ function handleOnlineWorkspacePreview(preview) {
   excludedTypes.clear();
   searchTerm = "";
   byId("search").value = "";
+  animateStructure = true;
   renderAll();
   fitGraph(false);
 }
@@ -657,9 +658,9 @@ function handleOnlineWorkspace(result) {
   onlineCurrentLink = workspace.shared ? new URL("./workspace?view=" + encodeURIComponent(workspace.id), location.href).href : "";
   const associationId = result.localProjectId || associationForWorkspace(workspace.id);
   if (associationId && projects.some((project) => project.id === associationId)) writeWorkspaceAssociation(associationId, workspace.id, workspace.ownerId || onlineState.ownerUid || effectiveAccountUid());
-  const sameProject = onlineGraphProject?.id === "online-" + workspace.id;
-  const graph = result.apply === false && sameProject ? onlineGraphProject.graph : normalizeGraph(result.graph, { allowEmpty: true });
-  const firstLoad = !sameProject;
+  const incoming = result.apply === false && onlineGraphProject?.onlineWorkspaceId === workspace.id
+    ? onlineGraphProject.graph : normalizeGraph(result.graph, { allowEmpty: true });
+  const { graph, firstLoad, preserveGraph } = workspaceGraphPresentation({ previousProject: onlineGraphProject, workspaceId: workspace.id, graph: incoming });
   onlineGraphProject = { id: "online-" + workspace.id, graph, updatedAt: Date.now(), onlineWorkspaceId: workspace.id, localProjectId: associationId };
   if (result.apply !== false) editHistory.sync(editHistoryScope(), graph);
   onlineRoute = onlineRoute || (onlineController.state().inOnlineRoute && Boolean(onlineController.state().sharedId));
@@ -679,7 +680,8 @@ function handleOnlineWorkspace(result) {
   byId("online-route-message").textContent = result.mode === "owner"
     ? "This map is open in owner mode. Changes save online after a short delay."
     : "You can inspect, search, filter, pan, and zoom. Editing and exports are disabled.";
-  renderAll();
+  animateStructure = firstLoad;
+  renderAll({ preserveGraph });
   if (firstLoad) fitGraph(false);
 }
 function handleOnlineWorkspaceStatus(event) {
@@ -731,6 +733,7 @@ function handleOnlineWorkspaceCreated(event) {
   onlinePendingUpload = null;
   byId("online-route-title").textContent = "Your online workspace";
   byId("online-route-message").textContent = "Owner edits save online after a short delay. Viewers with an active link can read the live map.";
+  animateStructure = true;
   renderAll();
   fitGraph(true);
 }
@@ -2733,6 +2736,7 @@ function renderGraph() {
     && graphMotionAllowed(graph)
     && !matchMedia("(prefers-reduced-motion: reduce)").matches;
   const routingLanes = edgeRoutingLanes(graph.edges);
+  const drawMotion = animateStructure && animationAllowed && !motionPaused;
   for (const node of graph.nodes) {
     const position = positions.get(node.id);
     const size = dimensions.get(node.id);
@@ -2745,7 +2749,7 @@ function renderGraph() {
     if (selectedNodeId && !trace.nodes.has(node.id)) group.classList.add("dimmed");
     if (focusedType && node.type !== focusedType) group.classList.add("focus-dimmed");
     if (matches.has(node.id) && searchTerm) group.classList.add("search-hit");
-    if (animateStructure && animationAllowed) group.classList.add("entering");
+    if (drawMotion) group.classList.add("entering");
     if (node.junction) {
       group.append(svgElement("circle", { class: "card-bg junction-bg", cx: size.width / 2, cy: size.height / 2, r: 14 }));
       const inputPort = svgElement("circle", { class: "card-port port-input", cx: 1, cy: size.height / 2, r: 5, "data-node-id": node.id, "aria-hidden": "true", tabindex: -1 });
@@ -2881,7 +2885,6 @@ function renderGraph() {
     nodeLayer.append(group);
     nodeCards.set(node.id, group);
   }
-  const drawMotion = animateStructure && animationAllowed;
   const minX = graph.nodes.length ? Math.min(...[...positions.values()].map((point) => point.x)) : 0;
   const maxX = graph.nodes.length ? Math.max(...[...positions.values()].map((point) => point.x)) : 1;
   graph.edges.forEach((edge, index) => {
@@ -3273,7 +3276,7 @@ function updateWorkspaceActionAvailability() {
     if (!canEdit) button.removeAttribute("aria-label");
   });
 }
-function renderAll() {
+function renderAll({ preserveGraph = false } = {}) {
   const historyProject = activeProject();
   if (historyProject) editHistory.ensure(editHistoryScope(historyProject), historyProject.graph);
   renderLibrary();
@@ -3281,7 +3284,7 @@ function renderAll() {
   updateWorkspaceActionAvailability();
   renderFilters();
   updateViewMode();
-  renderGraph();
+  if (!preserveGraph) renderGraph();
   renderInspector();
   localRecoveryMode();
   renderAutosaveAdmissionNotice();
