@@ -63,6 +63,117 @@ async function tools(page, name) {
   await page.getByRole("button", { name, exact: true }).click();
 }
 
+async function camera(page) {
+  return page.evaluate(() => {
+    const { width, height } = document.querySelector("#graph-stage").getBoundingClientRect();
+    const matrix = document.querySelector("#viewport").transform.baseVal.consolidate().matrix;
+    return { x: matrix.e, y: matrix.f, scale: matrix.a, width, height,
+      centreX: (width / 2 - matrix.e) / matrix.a, centreY: (height / 2 - matrix.f) / matrix.a };
+  });
+}
+function sameFocus(actual, expected) {
+  expect(actual.scale).toBeCloseTo(expected.scale, 5);
+  expect(actual.centreX).toBeCloseTo(expected.centreX, 3);
+  expect(actual.centreY).toBeCloseTo(expected.centreY, 3);
+}
+async function fullscreen(page) {
+  await page.locator("#graph-fullscreen").click();
+  await expect(page.locator("html")).not.toHaveClass(/graph-fullscreen-transition/);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+async function panCamera(page) {
+  const rect = await page.locator("#graph-stage").boundingBox();
+  const x = rect.x + 60, y = rect.y + rect.height - 100;
+  await page.mouse.move(x, y); await page.mouse.down();
+  await page.mouse.move(x + 60, y - 35, { steps: 5 }); await page.mouse.up();
+}
+
+test("full screen shares the latest pan and zoom in both directions across resize and map switches", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 700 });
+  await seed(page);
+  const search = page.getByRole("combobox", { name: "Find a component", exact: true });
+  await search.fill("API service"); await search.press("Enter"); await search.fill("");
+  const normal = await camera(page);
+  await fullscreen(page);
+  sameFocus(await camera(page), normal);
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await panCamera(page);
+  const expanded = await camera(page);
+  expect(expanded.scale).toBeGreaterThan(normal.scale);
+  expect(expanded.centreX).not.toBeCloseTo(normal.centreX, 1);
+  await fullscreen(page);
+  sameFocus(await camera(page), expanded);
+  await panCamera(page);
+  await page.getByRole("button", { name: "Zoom out", exact: true }).click();
+  const linked = await camera(page);
+  await fullscreen(page);
+  sameFocus(await camera(page), linked);
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await expect.poll(async () => (await camera(page)).width).not.toBe(expanded.width);
+  // Wait for the resize handler, which runs on the next animation frame.
+  await expect.poll(async () => (await camera(page)).centreX).toBeCloseTo(linked.centreX, 3);
+  sameFocus(await camera(page), linked);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  sameFocus(await camera(page), linked);
+  await page.getByRole("button", { name: /^B Beta Software project/ }).click();
+  const beta = await camera(page);
+  await fullscreen(page);
+  sameFocus(await camera(page), beta);
+  await fullscreen(page);
+  sameFocus(await camera(page), beta);
+});
+
+test("native full-screen transitions keep focus and latest Escape wins", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference", colorScheme: "light" });
+  await seed(page);
+  await page.getByRole("button", { name: "Switch to light theme", exact: true }).click();
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const normal = await camera(page);
+  await fullscreen(page);
+  sameFocus(await camera(page), normal);
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await panCamera(page);
+  const expanded = await camera(page);
+  await fullscreen(page);
+  sameFocus(await camera(page), expanded);
+  await fullscreen(page);
+  sameFocus(await camera(page), expanded);
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#graph-fullscreen")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("html")).not.toHaveClass(/graph-fullscreen-transition/);
+  sameFocus(await camera(page), expanded);
+  await page.locator("#graph-fullscreen").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("html")).not.toHaveClass(/graph-fullscreen-transition/);
+  await expect(page.locator("#graph-fullscreen")).toHaveAttribute("aria-pressed", "false");
+  sameFocus(await camera(page), expanded);
+});
+
+test("unsupported transitions ease the camera instead of jumping or refitting", async ({ page }) => {
+  await page.addInitScript(() => { document.startViewTransition = undefined; });
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.clock.install({ time: new Date("2026-01-01T09:00:00Z") });
+  await seed(page);
+  await page.clock.pauseAt(new Date("2026-01-01T10:00:00Z"));
+  const normal = await camera(page);
+  await page.locator("#graph-fullscreen").click();
+  const start = await camera(page);
+  expect(start.x).toBe(normal.x);
+  await page.clock.runFor(80);
+  const intermediate = await camera(page);
+  expect(intermediate.x).not.toBe(start.x);
+  await page.clock.runFor(450);
+  const finished = await camera(page);
+  sameFocus(finished, normal);
+  expect(intermediate.x).not.toBe(finished.x);
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const changed = await camera(page);
+  await page.keyboard.press("Escape");
+  await page.clock.runFor(450);
+  sameFocus(await camera(page), changed);
+});
+
 test("backup preview is non-destructive and malformed data preserves existing maps", async ({
   page,
 }) => {
@@ -263,9 +374,6 @@ test("updates are reviewed, checkpoints survive refresh, and restoration can be 
   await page
     .getByLabel("Or paste updated map JSON", { exact: true })
     .fill(JSON.stringify(next));
-  await page
-    .getByRole("button", { name: "Preview changes", exact: true })
-    .click();
   await expect(page.locator("#map-update-preview")).toContainText(
     "Added components · 1",
   );
@@ -274,13 +382,68 @@ test("updates are reviewed, checkpoints survive refresh, and restoration can be 
   await expect(page.locator("#nodes-layer .node-card")).toHaveCount(4);
   await page.reload();
   await tools(page, "Checkpoints…");
-  await page.getByRole("button", { name: "Review", exact: true }).click();
+  await page.locator(".checkpoint-item").click({ position: { x: 20, y: 20 } });
+  await expect(page.getByRole("button", { name: "Review", exact: true })).toBeVisible();
+  await expect(page.locator("#checkpoint-preview details").first()).toHaveAttribute("open", "");
   await page
     .getByRole("button", { name: "Restore checkpoint", exact: true })
     .click();
   await expect(page.locator("#nodes-layer .node-card")).toHaveCount(3);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.locator("#nodes-layer .node-card")).toHaveCount(4);
+});
+
+test("updates auto-preview files and checkpoint row review leaves secondary actions independent", async ({ page }) => {
+  await seed(page);
+  await tools(page, "Update current map\u2026");
+  const input = page.getByLabel("Or paste updated map JSON", { exact: true });
+  const apply = page.getByRole("button", { name: "Apply update", exact: true });
+  await input.fill(JSON.stringify(graph("Changed name")));
+  await expect(apply).toBeEnabled();
+  await input.fill("{unfinished");
+  await expect(apply).toBeDisabled();
+  await expect(page.locator("#map-update-error")).toBeVisible();
+  await input.fill("");
+  await expect(page.locator("#map-update-error")).toBeHidden();
+  await page.getByLabel("Choose updated map JSON", { exact: true }).setInputFiles({
+    name: "updated.json", mimeType: "application/json", buffer: Buffer.from(JSON.stringify(graph("File version"))),
+  });
+  await expect(apply).toBeEnabled();
+  await expect(page.locator("#map-update-preview")).toContainText("File version");
+  await expect(page.locator("#project-title")).toHaveText("Alpha");
+  await page.locator("#map-update-cancel").click();
+  await tools(page, "Checkpoints\u2026");
+  for (const name of ["Snapshot A", "Snapshot B"]) {
+    await page.getByLabel("Checkpoint name", { exact: true }).fill(name);
+    await page.getByRole("button", { name: "Save checkpoint", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Review checkpoint " + name, exact: true })).toBeVisible();
+  }
+  const checkpoint = name => page.locator(".checkpoint-item").filter({
+    has: page.getByRole("button", { name: "Review checkpoint " + name, exact: true }),
+  });
+  const selection = name => checkpoint(name).locator(".checkpoint-select");
+  await selection("Snapshot A").focus(); await page.keyboard.press("Enter");
+  await expect(selection("Snapshot A")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Restore checkpoint", exact: true })).toBeVisible();
+  await Promise.all([
+    page.waitForEvent("download"), checkpoint("Snapshot B").getByRole("button", { name: "Download", exact: true }).click(),
+  ]);
+  await expect(selection("Snapshot A")).toHaveAttribute("aria-pressed", "true");
+  await expect(selection("Snapshot B")).toHaveAttribute("aria-pressed", "false");
+  await checkpoint("Snapshot B").getByRole("button", { name: "Rename", exact: true }).click();
+  await page.getByRole("textbox", { name: "New name for Snapshot B", exact: true }).fill("Renamed snapshot");
+  await checkpoint("Snapshot B").getByRole("button", { name: "Save name", exact: true }).click();
+  await expect(selection("Renamed snapshot")).toBeVisible();
+  await expect(selection("Snapshot A")).toHaveAttribute("aria-pressed", "true");
+  await checkpoint("Renamed snapshot").getByRole("button", { name: "Remove", exact: true }).click();
+  await expect(checkpoint("Renamed snapshot").getByRole("button", { name: "Confirm removal", exact: true })).toBeVisible();
+  await expect(selection("Snapshot A")).toHaveAttribute("aria-pressed", "true");
+  await checkpoint("Renamed snapshot").click({ position: { x: 20, y: 20 } });
+  await expect(selection("Renamed snapshot")).toHaveAttribute("aria-pressed", "true");
+  await checkpoint("Snapshot A").getByRole("button", { name: "Review", exact: true }).click();
+  await expect(selection("Snapshot A")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#nodes-layer .node-card")).toHaveCount(3);
+  await expect(page.locator(".checkpoint-item")).toHaveCount(2);
 });
 
 test("compact details overlay preserves map size and full screen exits with Escape", async ({

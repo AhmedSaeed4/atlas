@@ -8,6 +8,8 @@ import { LIBRARY_PREFERENCES_KEY, createLibraryPreferences, filterWorkspaceLibra
 import { initWorkspaceGuide } from "./workspace-guide.js";
 import { initMapVersionTools } from "./map-version-tools.js";
 import { bindDialogBackdropClose } from "./dialog-dismissal.js";
+import { resizeGraphCamera } from "./graph-camera.js";
+import { appendMapSettingsAction } from "./map-settings-actions.js";
 import { sameMapContext, compareGraphVersions } from "./map-update.js";
 import { createGraphGeometryCache, createFrameBatch, updateDraggedGraph } from "./graph-render-cache.js";
 import { SAMPLE_GRAPHS } from "./samples.js";
@@ -310,6 +312,19 @@ const sidebarDrawer = createSidebarDrawer({
   sidebar: byId("sidebar"), main: byId("workspace-main"), trigger: byId("mobile-menu"),
   backdrop: byId("sidebar-backdrop"), closeButton: byId("sidebar-close"), onChange: () => localMapTip.refresh(),
 });
+let lastGraphViewport = null;
+let pendingGraphRestore = null;
+function graphViewportSize() {
+  const rect = byId("graph-stage").getBoundingClientRect();
+  return { width: rect.width, height: rect.height };
+}
+function captureGraphView() {
+  stopFitAnimation();
+  lastGraphViewport = graphViewportSize();
+  return { scope: editHistoryScope(), viewMode,
+    geometry: graphGeometry.get(presentationGraph()).key,
+    viewport: lastGraphViewport, transform: { ...transform } };
+}
 const graphFullscreen = createGraphFullscreen({
   toggle: byId("graph-fullscreen"),
   beforeEnter: () => {
@@ -318,20 +333,22 @@ const graphFullscreen = createGraphFullscreen({
     hideGraphContextMenu();
     byId("export-menu").hidden = true;
   },
-  captureView: () => {
-    stopFitAnimation();
-    return { projectId: activeProject()?.id || "", viewMode, width: innerWidth, height: innerHeight, transform: { ...transform } };
-  },
-  onChange: (active, previous) => {
-    if (!active) applyInspectorWidth(inspectorExpanded ? currentInspectorLimits().max : inspectorPreferredWidth, { expanded: inspectorExpanded });
-    if (!active && previous.projectId === (activeProject()?.id || "") && previous.viewMode === viewMode
-        && previous.width === innerWidth && previous.height === innerHeight) {
-      stopFitAnimation();
-      transform = { ...previous.transform };
-      setViewportTransform();
-    } else fitGraph(false);
+  captureView: captureGraphView,
+  onChange: (active, _previous, leaving) => {
     fullscreenInspectorExpanded = false;
+    if (!active) applyInspectorWidth(inspectorExpanded ? currentInspectorLimits().max : inspectorPreferredWidth, { expanded: inspectorExpanded });
     renderInspector();
+    const context = { scope: editHistoryScope(), viewMode, geometry: graphGeometry.get(presentationGraph()).key };
+    // Both layouts share one live camera. Carry the outgoing centre and zoom
+    // into the new viewport rather than restoring an older layout's position.
+    const target = resizeGraphCamera(leaving, graphViewportSize());
+    if (target) {
+      // View Transitions animate the container and its final camera together.
+      // Avoid running a second animation behind their frozen snapshots.
+      const animate = !document.documentElement.classList.contains("graph-fullscreen-transition");
+      pendingGraphRestore = { ...context, viewport: graphViewportSize(), transform: target, animate };
+      moveViewport(target, { animate, duration: 380, retainRestore: true });
+    } else { pendingGraphRestore = null; fitGraph(false); }
     localMapTip.refresh();
   },
 });
@@ -571,12 +588,26 @@ function bindInspectorResize() {
   });
   window.addEventListener("resize", () => {
     requestAnimationFrame(() => {
+      const before = { viewport: lastGraphViewport, transform: { ...transform } };
       const limits = currentInspectorLimits();
       const preferredWidth = inspectorExpanded ? limits.max : inspectorPreferredWidth;
       applyInspectorWidth(preferredWidth, { expanded: inspectorExpanded });
-      fitGraph(false);
+      const retained = graphFullscreen.isActive() && resizeGraphCamera(before, graphViewportSize());
+      if (retained) moveViewport(retained, { animate: false });
+      else fitGraph(false);
     });
   }, { passive: true });
+  // Full-screen layout can settle after the class change (for example when a
+  // scrollbar disappears). Retain the camera through that final size change.
+  new ResizeObserver(() => {
+    if ((!graphFullscreen.isActive() && !pendingGraphRestore) || !lastGraphViewport) return;
+    const viewport = graphViewportSize();
+    if (viewport.width === lastGraphViewport.width && viewport.height === lastGraphViewport.height) return;
+    const pending = pendingGraphRestore?.scope === editHistoryScope() && pendingGraphRestore.viewMode === viewMode
+      && pendingGraphRestore.geometry === graphGeometry.get(presentationGraph()).key ? pendingGraphRestore : null;
+    const retained = resizeGraphCamera(pending || { viewport: lastGraphViewport, transform }, viewport);
+    if (retained) moveViewport(retained, { animate: pending?.animate ?? false, duration: 380, retainRestore: true });
+  }).observe(byId("graph-stage"));
 }
 function cancelWorkspaceRestore() {
   workspaceNavigation.cancelRestore();
@@ -1654,13 +1685,8 @@ function showMapSettingsMessage(message, { error = false } = {}) {
   node.hidden = !message;
 }
 function addMapSettingsAction(label, action, { danger = false, disabled = false } = {}) {
-  const button = plain("button", danger ? "button danger" : "button secondary", label);
-  button.type = "button";
-  button.dataset.actionLabel = label;
-  button.disabled = Boolean(disabled);
-  button.addEventListener("click", () => action(mapSettingsController.getCurrent()));
-  byId("map-settings-actions").append(button);
-  return button;
+  return appendMapSettingsAction(byId("map-settings-actions"), label,
+    () => action(mapSettingsController.getCurrent()), { danger, disabled });
 }
 function renderMapSettings() {
   const target = mapSettingsController.getCurrent();
@@ -2780,13 +2806,15 @@ function setViewportTransform() {
   const percent = transform.scale * 100;
   byId("zoom-label").textContent = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
 }
-function stopFitAnimation() {
+function stopFitAnimation({ retainRestore = false } = {}) {
+  if (!retainRestore) pendingGraphRestore = null;
   fitAnimationSequence += 1;
   if (fitAnimationFrame) cancelAnimationFrame(fitAnimationFrame);
   fitAnimationFrame = 0;
 }
-function moveViewport(target, { animate = true, duration = 240 } = {}) {
-  stopFitAnimation();
+function moveViewport(target, { animate = true, duration = 240, retainRestore = false } = {}) {
+  stopFitAnimation({ retainRestore });
+  lastGraphViewport = graphViewportSize();
   const sequence = fitAnimationSequence;
   const graph = currentGraph(), scope = editHistoryScope(), mode = viewMode;
   if (!animate || matchMedia("(prefers-reduced-motion: reduce)").matches) {

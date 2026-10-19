@@ -281,3 +281,66 @@ test("checkpoint restores report unsaved recovery instead of claiming successful
   assert.match(f.notices[0][0], /not saved yet/);
   assert.equal(f.get("checkpoint-dialog").open, false);
 });
+
+test("typed or pasted updates automatically preview, invalidate stale candidates and cancel on close", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const f = fixture(t);
+  await f.click("update-current-map");
+  const input = f.get("map-update-input");
+  input.value = JSON.stringify(graph("Updated"));
+  await input.fire("input");
+  assert.equal(f.get("map-update-apply").disabled, true);
+  t.mock.timers.tick(180);
+  assert.equal(f.get("map-update-apply").disabled, false);
+  assert.match(f.get("map-update-preview").textContent, /Updated/);
+  assert.equal(f.applied.length, 0);
+  input.value = "unfinished";
+  await input.fire("input");
+  assert.equal(f.get("map-update-apply").disabled, true);
+  t.mock.timers.tick(180);
+  assert.equal(f.get("map-update-apply").disabled, true);
+  assert.ok(f.get("map-update-error").textContent);
+  input.value = JSON.stringify(graph("Newer"));
+  await input.fire("input");
+  await f.click("map-update-close");
+  await f.click("update-current-map");
+  t.mock.timers.tick(180);
+  assert.equal(f.get("map-update-preview").textContent, "");
+  assert.equal(f.get("map-update-apply").disabled, true);
+});
+
+test("a late file read cannot replace newer pasted text or its automatic preview", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const read = deferred(), f = fixture(t);
+  await f.click("update-current-map");
+  f.get("map-update-file").files = [{ size: 100, text: () => read.promise }];
+  const loading = f.get("map-update-file").fire("change");
+  assert.equal(f.get("map-update-input").value, "");
+  f.get("map-update-input").value = JSON.stringify(graph("Pasted"));
+  await f.get("map-update-input").fire("input");
+  t.mock.timers.tick(180);
+  read.resolve(JSON.stringify(graph("Old file")));
+  await loading;
+  assert.match(f.get("map-update-input").value, /Pasted/);
+  assert.match(f.get("map-update-preview").textContent, /Pasted/);
+  assert.equal(f.get("map-update-apply").disabled, false);
+});
+
+test("checkpoint selection opens the comparison but never restores without explicit confirmation", async (t) => {
+  const f = fixture(t);
+  await f.click("open-checkpoints");
+  await setImmediate();
+  const selection = f.get("checkpoint-list").querySelector(".checkpoint-select");
+  await selection.fire("click");
+  assert.equal(selection.attributes["aria-pressed"], "true");
+  assert.equal(f.get("checkpoint-restore").hidden, false);
+  assert.match(f.get("checkpoint-preview").textContent, /Before/);
+  const sections = f.get("checkpoint-preview").descendants().filter(node => node.tagName === "details");
+  assert.ok(sections.length > 0 && sections.every(section => section.open));
+  assert.equal(f.applied.length, 0);
+  f.context({ key: "cloud:another-owner:map", ownerUid: "another-owner" });
+  await selection.fire("click");
+  assert.equal(f.get("checkpoint-preview").textContent, "");
+  assert.equal(f.get("checkpoint-restore").hidden, true);
+  assert.equal(f.applied.length, 0);
+});

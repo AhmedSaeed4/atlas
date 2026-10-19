@@ -16,6 +16,7 @@ export function renderVersionComparison(
   before,
   after,
   comparison = compareGraphVersions(before, after),
+  { expanded = false } = {},
 ) {
   host.replaceChildren();
   if (comparison.projectChanged)
@@ -62,6 +63,7 @@ export function renderVersionComparison(
       const items = group[action];
       if (!items.length) continue;
       const details = el("details", "comparison-section");
+      details.open = expanded;
       details.append(
         el(
           "summary",
@@ -131,6 +133,7 @@ export function initMapVersionTools({
     selectedCheckpoint = null,
     epoch = 0,
     checkpointEpoch = 0,
+    previewTimer = null,
     applying = null,
     checkpointOperation = null;
   const message = (id, text) => {
@@ -169,6 +172,8 @@ export function initMapVersionTools({
     );
   };
   function resetUpdate() {
+    clearTimeout(previewTimer);
+    previewTimer = null;
     candidate = null;
     byId("map-update-apply").disabled = true;
     byId("map-update-preview").replaceChildren();
@@ -230,24 +235,33 @@ export function initMapVersionTools({
   );
   updateDialog.addEventListener("close", () => {
     epoch++;
-    candidate = null;
+    resetUpdate();
     updateContext = null;
     byId("map-update-input").value = "";
     byId("map-update-preview").replaceChildren();
   });
   byId("map-update-input").addEventListener("input", () => {
-    epoch++;
+    const request = ++epoch, context = updateContext;
     resetUpdate();
+    byId("map-update-file").value = "";
+    if (!byId("map-update-input").value.trim()) return;
+    // Batch typing, but prepare pasted JSON without another button press.
+    previewTimer = setTimeout(() => {
+      previewTimer = null;
+      if (updateOpen(context, request)) previewUpdate();
+    }, 180);
   });
   byId("map-update-validate").addEventListener("click", previewUpdate);
   byId("map-update-positions").addEventListener("change", () => {
-    if (candidate) previewUpdate();
+    if (byId("map-update-input").value.trim()) previewUpdate();
   });
   byId("map-update-file").addEventListener("change", async () => {
     const file = byId("map-update-file").files?.[0],
       request = ++epoch;
     resetUpdate();
     if (!file) return;
+    // Do not leave an older candidate's text available while this file loads.
+    byId("map-update-input").value = "";
     if (file.size > MAX_IMPORT_BYTES) {
       message("map-update-error", "This map exceeds the 2 MiB import limit.");
       return;
@@ -319,6 +333,7 @@ export function initMapVersionTools({
         );
       for (const record of records) {
         const item = el("li", "checkpoint-item"),
+          select = el("button", "checkpoint-select"),
           name = el("strong", "", record.name),
           meta = el(
             "p",
@@ -329,6 +344,24 @@ export function initMapVersionTools({
               " components",
           );
         const actions = el("div", "checkpoint-actions");
+        const review = () => {
+          if (!checkpointsOpen(context, request) || !current(context) || checkpointOperation) return;
+          message("checkpoint-error", "");
+          selectedCheckpoint = record;
+          for (const row of list.children) {
+            const chosen = row === item;
+            row.setAttribute("data-selected", String(chosen));
+            row.querySelector(".checkpoint-select")?.setAttribute("aria-pressed", String(chosen));
+          }
+          renderVersionComparison(byId("checkpoint-preview"), context.graph, record.graph, undefined, { expanded: true });
+          byId("checkpoint-restore").hidden = false;
+        };
+        select.type = "button";
+        select.setAttribute("aria-label", "Review checkpoint " + record.name);
+        select.setAttribute("aria-controls", "checkpoint-preview");
+        select.setAttribute("aria-pressed", String(selectedCheckpoint?.key === record.key));
+        item.setAttribute("data-selected", String(selectedCheckpoint?.key === record.key));
+        select.addEventListener("click", review);
         const action = (label, run) => {
           const button = el("button", "button secondary", label);
           button.type = "button";
@@ -353,15 +386,7 @@ export function initMapVersionTools({
           actions.append(button);
           return button;
         };
-        action("Review", () => {
-          selectedCheckpoint = record;
-          renderVersionComparison(
-            byId("checkpoint-preview"),
-            context.graph,
-            record.graph,
-          );
-          byId("checkpoint-restore").hidden = false;
-        });
+        action("Review", review);
         action("Download", () =>
           download(
             serializeGraphJson(record.graph, 2),
@@ -400,7 +425,7 @@ export function initMapVersionTools({
           if (selectedCheckpoint?.key === record.key) clearCheckpointPreview();
           await listCheckpoints();
         });
-        item.append(name, meta, actions);
+        item.append(select, name, meta, actions);
         list.append(item);
       }
     } catch (error) {

@@ -648,12 +648,10 @@ select { color: var(--atlas-foreground); }
 .toast-region[popover]{inset:auto auto 43px 50%;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 32px);height:auto;margin:0;padding:0;border:0;background:transparent;overflow:visible;pointer-events:none}
 .toast-region[popover]:not(:popover-open){display:none}
 .toast-region::backdrop{background:transparent;pointer-events:none}
-.map-settings-actions{min-height:34px;align-items:flex-start;align-content:start}
-@media(min-width:561px) and (max-width:700px){.map-settings-actions{min-height:76px}}
 @keyframes action-spin{to{transform:rotate(360deg)}}
 @keyframes action-appear{from{opacity:0}to{opacity:1}}
 html[data-action-page-hidden="true"] .action-spinner,html[data-action-page-hidden="true"] #save-status[aria-busy="true"]::before{animation-play-state:paused}
-@media(max-width:560px){.map-settings-actions{min-height:252px}.toast-region[popover]{bottom:18px}}
+@media(max-width:560px){.toast-region[popover]{bottom:18px}}
 @media(prefers-reduced-motion:reduce){.action-spinner,.action-progress,#save-status[aria-busy="true"]::before{animation:none}.toast{animation:none}}
 
 .action-progress.is-compact>span:last-child{display:none}

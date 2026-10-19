@@ -10,8 +10,9 @@ export function createGraphFullscreen({ toggle, beforeEnter = () => {}, captureV
 
   function apply(next) {
     if (next === active) return;
+    const leavingView = captureView();
     if (next) {
-      previous = { x: win.scrollX, y: win.scrollY, view: captureView() };
+      previous = { x: win.scrollX, y: win.scrollY, view: leavingView };
       beforeEnter();
     }
     active = next;
@@ -20,7 +21,7 @@ export function createGraphFullscreen({ toggle, beforeEnter = () => {}, captureV
     toggle.setAttribute("aria-label", active ? "Exit full screen graph" : "Enter full screen graph");
     toggle.title = active ? "Exit full screen (Esc)" : "Expand graph to full screen";
     label.textContent = active ? "Exit full screen" : "Full screen";
-    onChange(active, previous?.view);
+    onChange(active, previous?.view, leavingView);
     if (!active) {
       win.scrollTo(previous.x, previous.y);
       previous = null;

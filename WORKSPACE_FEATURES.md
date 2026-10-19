@@ -9,10 +9,13 @@ Atlas still opens software architecture maps from an external coding agent, with
 - Expand **Groups** inside Explore to fold a named group into a summary. Counts include only visible members. Summary connections aggregate actual connections; internal connections appear as counts. Click a summary or uncheck its group to expand. Map and Timeline use the same projection. Export always uses the full original map.
 - At compact laptop/tablet widths, the Inspector overlays the graph. Its circular details control sits beside Map/Timeline. Selecting a component opens details; an empty-canvas click or Close dismisses it. At large widths it retains the normal docked layout. Full screen retains its existing separate exit control and Escape behavior.
 - Ordinary component/connection text edits retain pan and zoom. Finder intentionally centers a result; topology/layout changes may fit the graph.
+- **Full screen** and normal Map share the latest zoom and focus. Try zooming into a component, entering full screen, moving/zooming there, then exiting: the latest view carries back with you. Pan or zoom in normal view and enter again to check the same behavior in the other direction. Resizing while expanded also retains focus. There are no separate saved camera positions to jump back to. The existing expand/collapse transition stays smooth; reduced motion applies immediately.
 
 Search and dragging reuse mounted graph elements and cached geometry. Drag input is batched once per animation frame; only the moved component and its incident connections are updated. Timeline avoids constructing the hidden SVG. These changes reduce repeated work; actual frame rates still depend on the map, browser and device.
 
 ## Manage a library
+
+Open a map's sidebar settings to find **Manage map**, **Cloud & sharing** and **Remove map** in separate groups. Short descriptions explain each action, and icons help distinguish them. Availability and confirmations follow the same local/cloud permissions.
 
 The sidebar search filters workspace names without changing the current map. A map's settings include **Pin in sidebar**. Pins change display order only, preserving canonical creation order and exact action targets. Cloud pins are separated by verified account; preferences contain IDs, not graph contents. The sidebar also shows last-edited context.
 
@@ -37,7 +40,7 @@ Recovery normally survives reload through IndexedDB, scoped to the tab's session
 Ordinary **Import architecture** still creates a separate map. To compare a fresh agent output with the current map:
 
 1. Open **Map tools → Update current map** on an editable map.
-2. Paste or choose the updated graph JSON. Preview added, changed and removed components/connections and project details.
+2. Paste or choose the updated graph JSON. The preview prepares automatically (after a brief typing pause), showing added, changed and removed components/connections and project details. Apply becomes available when valid input contains changes. Preview changes remains available to refresh manually. Editing/clearing input immediately disables any old candidate; invalid or unchanged input cannot be applied.
 3. **Keep current positions** preserves positions for matching component IDs, including the current calculated arrangement. New components use the normal layout. Uncheck it to accept positions in the incoming data.
 4. Apply explicitly, or cancel to leave the map unchanged. Apply uses normal Undo, local guarded saving or the owner's existing cloud autosave queue. An online queued save is not server confirmation; wait for **Saved online**.
 
@@ -45,7 +48,7 @@ Matching uses stable component and connection IDs. Renamed IDs count as removal 
 
 ## Device checkpoints
 
-Open **Map tools → Checkpoints** on an editable local map or verified owned cloud map. Give the current version a name and save. Review differences before restoring; Download, Rename and two-step Remove are available per checkpoint. Restore uses the normal save and Undo flow. Closing a dialog before a pending restore read completes cancels the restore.
+Open **Map tools → Checkpoints** on an editable local map or verified owned cloud map. Give the current version a name and save. Click anywhere on a checkpoint row, or use its Review button, to open its expanded change lists and make Restore available. The row also supports keyboard activation. Selection never restores automatically; Restore requires a separate click. Download, Rename and two-step Remove keep their separate actions and do not select another checkpoint. Restore uses the normal save and Undo flow. Closing a dialog before a pending restore read completes cancels the restore.
 
 Checkpoints survive reload in this browser and origin, with at most eight checkpoints and a 12 MiB total budget per map. A full budget rejects a new checkpoint; existing named versions are never automatically evicted. They are device copies, not cloud revision history, and do not synchronize across devices. Another account or a shared viewer cannot access an owner's checkpoint tools.
 
