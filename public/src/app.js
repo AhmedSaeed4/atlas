@@ -2,11 +2,21 @@ import { canonicalWorkspaceUrl, workspaceBaseUrl } from "./routing.js";
 import { normalizeGraph, normalizeEditableGraph, assertGraphJsonWithinLimit, serializeGraphJson, MAX_IMPORT_BYTES, LIMITS, newEdgeId, newNodeId } from "./schema.js";
 import { createRandomWorkspaceId } from "./cloud-model.js";
 import { traceRoutes } from "./traces.js";
-import { layoutGraph } from "./layout.js";
-import { edgeGeometry, edgeRoutingLanes, graphBounds } from "./geometry.js";
+import { nodeMatchesQuery, projectCollapsedGroups } from "./graph-exploration.js";
+import { initComponentFinder, initExplorationControls } from "./component-finder.js";
+import { LIBRARY_PREFERENCES_KEY, createLibraryPreferences, filterWorkspaceLibrary, editedLabel } from "./workspace-library-view.js";
+import { initWorkspaceGuide } from "./workspace-guide.js";
+import { initMapVersionTools } from "./map-version-tools.js";
+import { bindDialogBackdropClose } from "./dialog-dismissal.js";
+import { resizeGraphCamera } from "./graph-camera.js";
+import { appendMapSettingsAction } from "./map-settings-actions.js";
+import { sameMapContext, compareGraphVersions } from "./map-update.js";
+import { createGraphGeometryCache, createFrameBatch, updateDraggedGraph } from "./graph-render-cache.js";
 import { SAMPLE_GRAPHS } from "./samples.js";
 import { createProjectId, LIBRARY_STORAGE_KEY } from "./storage.js";
 import { createLocalLibrary, reconcileLocalLibrary } from "./local-library.js";
+import { createWorkspaceSafety } from "./workspace-safety.js";
+import { initBackupTools } from "./workspace-safety-ui.js";
 import { buildSvg, copyPng, downloadBlob, downloadText, exportJson, safeFilename, svgToPngBlob } from "./exports.js";
 import { buildAgentPrompt } from "./prompt.js";
 import { chartCompactReadout, chartDescription, chartGeometry, chartPresentation, chartValueLabel, createChartFigure } from "./charts.js";
@@ -57,6 +67,8 @@ let filterInputModality = "";
 let touchInteractionActive = false;
 let touchSelectedEdge = null;
 let searchTerm = "";
+let traceMode='downstream', collapsedGroups=new Set(), explorationScope='', projectionMemo=null;
+let componentFinder=null, explorationControls=null, mountedTimelineGraph=null;
 let editingNodeId = null;
 let editingEdgeId = null;
 let nodeEditContext = null;
@@ -86,13 +98,25 @@ let inspectorPreferredWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorRestoreWidth = INSPECTOR_DEFAULT_WIDTH;
 let inspectorExpanded = false;
 let fullscreenInspectorExpanded = false;
+let compactInspectorPreference = null, inspectorSelectionKey = "";
 let inspectorResizePointer = null;
 const importReadGate = createRevisionGate();
 const droppedFileGate = createRevisionGate();
 let fitAnimationFrame = 0;
 let fitAnimationSequence = 0;
 let animateStructure = true;
+const graphGeometry = createGraphGeometryCache();
+let mountedGraph = null, mountedCards = new Map(), mountedEdges = new Map();
+const dragPaint = createFrameBatch(({graph,projectId,nodeId,position}) => {
+  const project=projectById(projectId);
+  const projected=presentationGraph();
+  if(!dragState || dragState.kind!=='node' || dragState.id!==nodeId || activeProject()!==project || project?.graph!==graph || mountedGraph!==projected)return;
+  updateDraggedGraph({graph:projected,nodeId,position,cache:graphGeometry,cards:mountedCards,edges:mountedEdges});
+});
 let lastStorageError = "";
+let backupTools = null;
+let mapVersionTools = null;
+let workspaceSafety = null;
 let localSyncReady = false;
 let localSyncScheduled = false;
 let localSyncAfterWrite = false;
@@ -106,7 +130,12 @@ const workspaceNavigation = createWorkspaceNavigation({
   restore: !new URLSearchParams(location.search).has("view")
     && !location.hash.startsWith("#map=") && !isFlowExampleRoute(location.search, location.hash),
 });
+const libraryPreferences=createLibraryPreferences(onlineStorage);
+let librarySearchTerm="", workspaceGuide=null;
 const initialWorkspaceNavigation = workspaceNavigation.initial;
+if (initialWorkspaceNavigation.library === "local" && projects.some(project => project.id === initialWorkspaceNavigation.localProjectId)) {
+  activeId = initialWorkspaceNavigation.localProjectId;
+}
 const accountSession = getSharedAccountSession();
 const cloudImportController = createCloudImportController({
   account: accountSession, storage: onlineStorage,
@@ -283,6 +312,19 @@ const sidebarDrawer = createSidebarDrawer({
   sidebar: byId("sidebar"), main: byId("workspace-main"), trigger: byId("mobile-menu"),
   backdrop: byId("sidebar-backdrop"), closeButton: byId("sidebar-close"), onChange: () => localMapTip.refresh(),
 });
+let lastGraphViewport = null;
+let pendingGraphRestore = null;
+function graphViewportSize() {
+  const rect = byId("graph-stage").getBoundingClientRect();
+  return { width: rect.width, height: rect.height };
+}
+function captureGraphView() {
+  stopFitAnimation();
+  lastGraphViewport = graphViewportSize();
+  return { scope: editHistoryScope(), viewMode,
+    geometry: graphGeometry.get(presentationGraph()).key,
+    viewport: lastGraphViewport, transform: { ...transform } };
+}
 const graphFullscreen = createGraphFullscreen({
   toggle: byId("graph-fullscreen"),
   beforeEnter: () => {
@@ -291,20 +333,22 @@ const graphFullscreen = createGraphFullscreen({
     hideGraphContextMenu();
     byId("export-menu").hidden = true;
   },
-  captureView: () => {
-    stopFitAnimation();
-    return { projectId: activeProject()?.id || "", viewMode, width: innerWidth, height: innerHeight, transform: { ...transform } };
-  },
-  onChange: (active, previous) => {
-    if (!active) applyInspectorWidth(inspectorExpanded ? currentInspectorLimits().max : inspectorPreferredWidth, { expanded: inspectorExpanded });
-    if (!active && previous.projectId === (activeProject()?.id || "") && previous.viewMode === viewMode
-        && previous.width === innerWidth && previous.height === innerHeight) {
-      stopFitAnimation();
-      transform = { ...previous.transform };
-      setViewportTransform();
-    } else fitGraph(false);
+  captureView: captureGraphView,
+  onChange: (active, _previous, leaving) => {
     fullscreenInspectorExpanded = false;
+    if (!active) applyInspectorWidth(inspectorExpanded ? currentInspectorLimits().max : inspectorPreferredWidth, { expanded: inspectorExpanded });
     renderInspector();
+    const context = { scope: editHistoryScope(), viewMode, geometry: graphGeometry.get(presentationGraph()).key };
+    // Both layouts share one live camera. Carry the outgoing centre and zoom
+    // into the new viewport rather than restoring an older layout's position.
+    const target = resizeGraphCamera(leaving, graphViewportSize());
+    if (target) {
+      // View Transitions animate the container and its final camera together.
+      // Avoid running a second animation behind their frozen snapshots.
+      const animate = !document.documentElement.classList.contains("graph-fullscreen-transition");
+      pendingGraphRestore = { ...context, viewport: graphViewportSize(), transform: target, animate };
+      moveViewport(target, { animate, duration: 380, retainRestore: true });
+    } else { pendingGraphRestore = null; fitGraph(false); }
     localMapTip.refresh();
   },
 });
@@ -315,7 +359,6 @@ const truncate = (value, limit) => {
   const text = String(value || "");
   return text.length > limit ? text.slice(0, limit - 1) + "..." : text;
 };
-const nodeSearchText = (node) => [node.label, node.type, node.description, node.source, node.group, node.chart?.label, node.chart?.evidence, ...(node.chart?.categories || []), ...Object.values(node.details || {}).flat()].filter(Boolean).join(" ").toLowerCase();
 const plain = (tag, className, text) => {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -415,7 +458,12 @@ function currentInspectorLimits() {
   return inspectorWidthLimits(inspectorWorkspaceWidth());
 }
 function refreshFullscreenInspector(hasDetails) {
-  const active = graphFullscreen.isActive();
+  const fullscreen = graphFullscreen.isActive();
+  const compact = matchMedia('(max-width: 1200px)').matches && !fullscreen;
+  const active = fullscreen || compact;
+  document.documentElement.classList.toggle('compact-inspector', compact);
+  const key = selectedNodeId || selectedEdgeId || '';
+  if (key !== inspectorSelectionKey) { compactInspectorPreference=null;inspectorSelectionKey=key; }
   if (hasDetails === undefined) {
     const graph = currentGraph();
     hasDetails = graph.nodes.some(node => node.id === selectedNodeId)
@@ -423,7 +471,10 @@ function refreshFullscreenInspector(hasDetails) {
         && graph.edges.some(edge => edge.id === selectedEdgeId));
   }
   const inspector = byId("inspector");
-  const open = active && hasDetails;
+  const open = active && (fullscreen ? hasDetails : (compactInspectorPreference ?? hasDetails));
+  const toggle=byId("inspector-toggle");
+  toggle.hidden=!compact;toggle.setAttribute("aria-expanded",String(open));
+  toggle.setAttribute("aria-label",open?"Hide component details":"Show component details");
   document.documentElement.classList.toggle("graph-inspector-open", open);
   document.documentElement.classList.toggle("graph-inspector-wide", active && fullscreenInspectorExpanded);
   if (active && !open && inspector.contains(document.activeElement)) {
@@ -470,7 +521,7 @@ function applyInspectorWidth(value, { persist = false, expanded = false } = {}) 
       inspectorPreferredWidth = inspectorWidth;
     }
   }
-  if (graphFullscreen.isActive()) refreshFullscreenInspector();
+  refreshFullscreenInspector();
   return inspectorWidth;
 }
 
@@ -521,7 +572,7 @@ function bindInspectorResize() {
     fitGraph(false);
   });
   byId("expand-inspector").addEventListener("click", () => {
-    if (graphFullscreen.isActive()) {
+    if (graphFullscreen.isActive() || document.documentElement.classList.contains("compact-inspector")) {
       fullscreenInspectorExpanded = !fullscreenInspectorExpanded;
       refreshFullscreenInspector();
       return;
@@ -537,12 +588,26 @@ function bindInspectorResize() {
   });
   window.addEventListener("resize", () => {
     requestAnimationFrame(() => {
+      const before = { viewport: lastGraphViewport, transform: { ...transform } };
       const limits = currentInspectorLimits();
       const preferredWidth = inspectorExpanded ? limits.max : inspectorPreferredWidth;
       applyInspectorWidth(preferredWidth, { expanded: inspectorExpanded });
-      fitGraph(false);
+      const retained = graphFullscreen.isActive() && resizeGraphCamera(before, graphViewportSize());
+      if (retained) moveViewport(retained, { animate: false });
+      else fitGraph(false);
     });
   }, { passive: true });
+  // Full-screen layout can settle after the class change (for example when a
+  // scrollbar disappears). Retain the camera through that final size change.
+  new ResizeObserver(() => {
+    if ((!graphFullscreen.isActive() && !pendingGraphRestore) || !lastGraphViewport) return;
+    const viewport = graphViewportSize();
+    if (viewport.width === lastGraphViewport.width && viewport.height === lastGraphViewport.height) return;
+    const pending = pendingGraphRestore?.scope === editHistoryScope() && pendingGraphRestore.viewMode === viewMode
+      && pendingGraphRestore.geometry === graphGeometry.get(presentationGraph()).key ? pendingGraphRestore : null;
+    const retained = resizeGraphCamera(pending || { viewport: lastGraphViewport, transform }, viewport);
+    if (retained) moveViewport(retained, { animate: pending?.animate ?? false, duration: 380, retainRestore: true });
+  }).observe(byId("graph-stage"));
 }
 function cancelWorkspaceRestore() {
   workspaceNavigation.cancelRestore();
@@ -1478,7 +1543,7 @@ function setCloudLibraryState(message = "", retryable = false, loading = false) 
     retry.disabled = loading;
   }
 }
-function makeLibraryRow({ origin, id, ownerUid = "", name, type, count, details, active = false, open }) {
+function makeLibraryRow({ origin, id, ownerUid = "", name, type, count, details, updatedAt, active = false, open }) {
   const row = plain("div", "project-row" + (active ? " active" : ""));
   row.dataset.workspaceId = id;
   row.dataset.workspaceOrigin = origin;
@@ -1490,8 +1555,13 @@ function makeLibraryRow({ origin, id, ownerUid = "", name, type, count, details,
   openButton.setAttribute("aria-current", active ? "page" : "false");
   openButton.append(plain("span", "project-monogram", String(name || "A").slice(0, 1).toUpperCase()));
   const nameWrap = plain("span", "project-name-wrap");
-  nameWrap.append(plain("span", "project-name", name || "Untitled map"));
+  const pinned=libraryPreferences.pinned({origin,ownerUid}).has(id);
+  const nameLabel=plain("span", "project-name", name || "Untitled map");
+  if(pinned){const star=plain("span","project-pin-mark","★ ");star.setAttribute("aria-hidden","true");nameLabel.prepend(star);}
+  nameWrap.append(nameLabel);
   nameWrap.append(plain("span", "project-meta", type || details || (origin === "cloud" ? "Cloud Workspace" : "Software project")));
+  const edited=editedLabel(updatedAt);if(edited)nameWrap.append(plain("span","project-updated",edited));
+  openButton.title=(name||"Untitled map")+(pinned?" · pinned":"")+(edited?" · "+edited:"");
   openButton.append(nameWrap, plain("span", "project-count", String(count ?? "")));
   openButton.addEventListener("click", (event) => { event.stopPropagation(); open(); sidebarDrawer.setOpen(false, { restoreFocus: true }); });
   const settingsButton = plain("button", "project-row-settings");
@@ -1536,13 +1606,15 @@ function renderCloudLibrary() {
   else if (!snapshot) setCloudLibraryState("Loading your Cloud Workspace maps.", false, true);
   else if (!filtered.length) setCloudLibraryState("No Cloud Workspace maps yet. Import architecture here, or move a local map from its settings.");
   else setCloudLibraryState("");
-  for (const item of filtered) {
+  const visible=filterWorkspaceLibrary(filtered,{query:librarySearchTerm,pinned:libraryPreferences.pinned({origin:"cloud",ownerUid:uid})});
+  if(filtered.length&&!visible.length)list.append(plain("p","project-list-empty","No workspaces match your search."));
+  for (const item of visible) {
     const name = item.name || "Untitled cloud map";
     const details = (item.nodeCount ?? 0) + " components - " + (item.edgeCount ?? 0) + " connections"
       + (item.shared ? " - live link active" : "") + (item.deleting ? " - deletion needs retry" : "");
     list.append(makeLibraryRow({
       origin: "cloud", id: item.id, ownerUid: uid, name, type: details,
-      count: item.nodeCount ?? 0, details,
+      count: item.nodeCount ?? 0, details, updatedAt:item.updatedAt,
       active: isOnlineSession() && onlineTargetWorkspaceId === item.id,
       open: () => { void openOwnedOnlineWorkspace(item); },
     }));
@@ -1584,15 +1656,21 @@ function renderLibrary() {
   updateLibraryStatusCopy();
   updateExampleFlowVisibility();
   byId("clear-data").hidden = libraryMode !== "local" || currentWorkspaceActions().hideEditing;
+  backupTools?.update();
+  workspaceGuide?.update();
+  mapVersionTools?.update();
+  byId("library-search-field").hidden=currentWorkspaceActions().hideEditing;
   if (libraryMode === "cloud") { renderCloudLibrary(); localMapTip.refresh(); return; }
   list.replaceChildren();
   setCloudLibraryState("");
-  for (const project of projects) {
+  const visible=filterWorkspaceLibrary(projects,{query:librarySearchTerm,pinned:libraryPreferences.pinned({origin:"local"})});
+  if(projects.length&&!visible.length)list.append(plain("p","project-list-empty","No workspaces match your search."));
+  for (const project of visible) {
     const name = project.graph.project.name || "Untitled project";
     list.append(makeLibraryRow({
       origin: "local", id: project.id, name,
       type: project.graph.project.type || "Software project",
-      count: project.graph.nodes.length,
+      count: project.graph.nodes.length, updatedAt:project.updatedAt,
       active: !isOnlineSession() && activeId === project.id,
       open: () => selectProject(project.id),
     }));
@@ -1607,13 +1685,8 @@ function showMapSettingsMessage(message, { error = false } = {}) {
   node.hidden = !message;
 }
 function addMapSettingsAction(label, action, { danger = false, disabled = false } = {}) {
-  const button = plain("button", danger ? "button danger" : "button secondary", label);
-  button.type = "button";
-  button.dataset.actionLabel = label;
-  button.disabled = Boolean(disabled);
-  button.addEventListener("click", () => action(mapSettingsController.getCurrent()));
-  byId("map-settings-actions").append(button);
-  return button;
+  return appendMapSettingsAction(byId("map-settings-actions"), label,
+    () => action(mapSettingsController.getCurrent()), { danger, disabled });
 }
 function renderMapSettings() {
   const target = mapSettingsController.getCurrent();
@@ -1635,6 +1708,12 @@ function renderMapSettings() {
   copyFallback.hidden = !data.copyFallbackUrl;
   copyFallback.value = data.copyFallbackUrl || "";
   showMapSettingsMessage(data.loading && !graph ? "Loading this map's details..." : data.message || "");
+  const pinContext={origin:target.origin,id:target.id,ownerUid:target.ownerUid};
+  addMapSettingsAction(libraryPreferences.pinned(pinContext).has(target.id)?"Unpin from sidebar":"Pin in sidebar",current=>{
+    if(!current||!mapSettingsController.isCurrent(current))return;
+    const result=libraryPreferences.toggle({origin:current.origin,id:current.id,ownerUid:current.ownerUid});
+    renderLibrary();renderMapSettings();showToast(result.saved?(result.pinned?"Pinned in this browser.":"Unpinned."):"Pin preference changed for this tab; browser storage is unavailable.");
+  });
   if (target.origin === "local") {
     addMapSettingsAction(mapSettingsEditing ? "Cancel editing" : "Edit details", (current) => {
       if (!current) return;
@@ -1970,7 +2049,7 @@ function confirmDeleteLocalTarget(target) {
     showMapSettingsMessage("Resolve the pending Cloud Workspace save before deleting this local map.", { error: true });
     return;
   }
-  confirmSettingsAction(target, "Delete this local map?", "Remove " + (project.graph.project.name || "this map") + " from this browser's Local Workspace library? This does not delete any Cloud Workspace copy.", "Delete local map", async (current) => {
+  confirmSettingsAction(target, "Delete this local map?", "Remove " + (project.graph.project.name || "this map") + " and its named checkpoints from this browser's Local Workspace library? This does not delete any Cloud Workspace copy. Download important versions first.", "Delete local map", async (current) => {
     if (localProjectHasUnresolvedCloudCandidate(current.id)) throw new Error("Resolve the pending Cloud Workspace save before deleting this local map.");
     const live = resolveMapSettingsTarget(current, { projects, workspaces: onlineLibraryCache.snapshot || [], currentUid: currentAccountUid() });
     if (!live || live.project !== project) throw new Error("This local map changed or was removed before deletion.");
@@ -1995,6 +2074,7 @@ function confirmDeleteLocalTarget(target) {
       byId("search").value = "";
     }
     const saved = await localLibrary.save(projects, activeId);
+    if (saved.ok) await removeMapCheckpoints("local:" + current.id);
     renderAll();
     if (deletion.wasActive && activeId === deletion.activeId && !isOnlineSession()) fitGraph(true);
     if (mapSettingsController.isCurrent(target)) closeMapSettings();
@@ -2162,13 +2242,14 @@ function confirmDeleteCloudTarget(target, retry = false) {
   const name = mapSettingsData?.workspace?.name || target.item?.name || "this map";
   confirmSettingsAction(target, retry ? "Retry cloud deletion?" : "Delete this Cloud Workspace map?",
     retry ? "Finish deleting " + name + ". Its live link is already disabled."
-      : "Delete " + name + " from Cloud Workspace? This disables its live link and removes the cloud map. Local copies remain in this browser. Download JSON first if you want a separate backup.",
+      : "Delete " + name + " from Cloud Workspace? This disables its live link and removes the cloud map and its named checkpoints on this device. Separate local maps remain. Download important versions first.",
     retry ? "Retry deletion" : "Delete cloud map", async (current) => {
       if (!cloudTargetActionAllowed(current)) throw new Error("The account changed or this map has pending edits; deletion was stopped.");
       const service = await accountSession.getService();
       if (!mapSettingsController.isCurrent(target) || currentAccountUid() !== current.ownerUid) throw new Error("The account or target map changed before deletion.");
       await service.deleteWorkspace(current.id);
       if (!mapSettingsController.isCurrent(target) || currentAccountUid() !== current.ownerUid) return { cancelled: true };
+      await removeMapCheckpoints(cloudEditHistoryScope(current.ownerUid, current.id));
       onlineLibraryCache.snapshot = (onlineLibraryCache.snapshot || []).filter((item) => item.id !== current.id || item.ownerId !== current.ownerUid);
       onlineController.forgetOwnerPreview?.(current.id);
       removeWorkspaceAssociation(current.id);
@@ -2191,7 +2272,7 @@ function selectLibraryMode(mode, { selectFirst = false, restore = false } = {}) 
     cancelWorkspaceRestore();
     if (!onlineRoute) {
       if (mode === "cloud") workspaceNavigation.rememberCloudLibrary(currentAccountUid());
-      else workspaceNavigation.rememberLocal();
+      else workspaceNavigation.rememberLocal(activeId);
     }
   }
   const request = ++cloudLibraryRequest;
@@ -2350,7 +2431,7 @@ async function reloadOnlineWorkspace() {
 function returnToLocalWorkspace() {
   if (!preserveDirtyOwnerDraftForNavigation()) return false;
   cancelWorkspaceRestore();
-  workspaceNavigation.rememberLocal();
+  workspaceNavigation.rememberLocal(activeId);
   workspaceLoadingTarget = "";
   cloudLibraryFirstSelection.cancel();
   cloudLibraryRequest += 1;
@@ -2525,13 +2606,19 @@ async function persist(showFailure = true) {
       localProject.graph = onlineGraphProject.graph;
       localProject.updatedAt = Date.now();
       editHistory.sync(editHistoryScope(localProject), localProject.graph);
-      void localLibrary.save(projects, activeId).then(result => { if (!result.ok) showToast(result.error, "error"); });
+      void localLibrary.save(projects, activeId).then(async result => {
+        if (!result.ok) {
+          await backupTools?.captureUnsaved(localLibrary.unsavedProjects(projects), activeId);
+          showToast(result.error, "error");
+        }
+      });
     }
     const queued = onlineController.queueSave(onlineGraphProject.graph);
     if (!queued) byId("save-status").textContent = "Online changes not saved";
     return queued;
   }
   if (recoveryMode) {
+    await backupTools?.captureUnsaved(localLibrary.unsavedProjects(projects), activeId);
     byId("save-status").textContent = "Recovery mode";
     if (showFailure && !lastStorageError) {
       lastStorageError = "The saved library could not be read. Download its backup or deliberately clear local data before saving a replacement.";
@@ -2542,10 +2629,12 @@ async function persist(showFailure = true) {
   const selectedId = activeId;
   const result = await localLibrary.save(projects, selectedId);
   if (result.ok) {
-    if (!isOnlineSession() && activeId === selectedId) workspaceNavigation.rememberLocal();
+    if (!isOnlineSession() && activeId === selectedId) workspaceNavigation.rememberLocal(activeId);
     lastStorageError = "";
+    if (!localLibrary.hasUnsaved(projects)) void backupTools?.saved();
     return true;
   }
+  await backupTools?.captureUnsaved(localLibrary.unsavedProjects(projects), selectedId);
   if (showFailure && result.error !== lastStorageError) showToast(result.error, "error");
   lastStorageError = result.error;
   return false;
@@ -2581,7 +2670,9 @@ function graphTypeAccent(type) {
 function renderFilters() {
   const container = byId("type-filter-content");
   container.replaceChildren();
-  const types = [...new Set(currentGraph().nodes.map((node) => node.type))].sort((a, b) => a.localeCompare(b));
+  const counts = new Map();
+  for (const node of currentGraph().nodes) counts.set(node.type,(counts.get(node.type)||0)+1);
+  const types = [...counts.keys()].sort((a,b)=>a.localeCompare(b));
   if (focusedType && !types.includes(focusedType)) focusedType = "";
   if (lockedType && !types.includes(lockedType)) lockedType = "";
   if (!types.length) { syncFilterSpotlight(); return; }
@@ -2601,7 +2692,7 @@ function renderFilters() {
     });
     byId("type-filter-status").textContent = "All component types are visible and no type highlight is active.";
     renderFilters();
-    renderGraph();
+    refreshGraphPresentation();
   });
   container.append(all);
   for (const type of types) {
@@ -2611,7 +2702,7 @@ function renderFilters() {
     chip.setAttribute("aria-pressed", String(!excludedTypes.has(type)));
     const dot = plain("span", "type-dot");
     dot.style.background = graphTypeAccent(type);
-    chip.append(dot, plain("span", "", type), plain("span", "chip-count", String(currentGraph().nodes.filter((node) => node.type === type).length)));
+    chip.append(dot, plain("span", "", type), plain("span", "chip-count", String(counts.get(type))));
     chip.addEventListener("click", (event) => {
       const pointerDownType = filterPointerActivation?.type === type ? filterPointerActivation.pointerType : "";
       filterPointerActivation = null;
@@ -2638,7 +2729,7 @@ function renderFilters() {
           : type + " components restored. Click again to lock the highlight.";
       if (wasHidden !== excludedTypes.has(type)) {
         renderFilters();
-        renderGraph();
+        refreshGraphPresentation();
       }
     });
     container.append(chip);
@@ -2673,19 +2764,25 @@ function applyTypeInteraction(action) {
   }
   return next;
 }
+function refreshGraphPresentation() {
+  if (viewMode==='timeline')renderTimelineView();
+  else if(mountedGraph===presentationGraph())refreshTraceStyles();
+  else renderGraph();
+}
 function refreshTraceStyles() {
-  const graph = currentGraph();
-  const trace = traceRoutes(graph, selectedNodeId);
+  const graph = presentationGraph();
+  const trace = traceRoutes(graph, selectedNodeId, traceMode);
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
-  const matches = new Set(graph.nodes.filter((node) => !searchTerm || nodeSearchText(node).includes(searchTerm)).map((node) => node.id));
+  const matches = new Set(graph.nodes.filter((node) => !searchTerm || nodeMatchesQuery(node,searchTerm)).map((node) => node.id));
   for (const card of byId("nodes-layer").querySelectorAll(".node-card")) {
     const nodeId = card.getAttribute("data-node-id");
     const selected = nodeId === selectedNodeId;
     const matched = matches.has(nodeId);
     const focusDimmed = Boolean(focusedType && nodeById.get(nodeId)?.type !== focusedType);
     card.classList.toggle("selected", selected);
+    card.classList.toggle("filtered", excludedTypes.has(nodeById.get(nodeId)?.type));
     card.classList.toggle("search-hit", Boolean(searchTerm && matched));
-    card.classList.toggle("dimmed", Boolean((searchTerm && !matched) || (selectedNodeId && !trace.nodes.has(nodeId))));
+    card.classList.toggle("dimmed", Boolean((searchTerm && !matched) || (selectedNodeId && traceMode!=="all" && !trace.nodes.has(nodeId))));
     card.classList.toggle("focus-dimmed", focusDimmed);
   }
   for (const card of byId("timeline-view").querySelectorAll(".timeline-node-card")) {
@@ -2694,9 +2791,10 @@ function refreshTraceStyles() {
   for (const group of byId("edges-layer").querySelectorAll(".edge-group")) {
     const edgeIndex = Number(group.getAttribute("data-edge-index"));
     const edge = graph.edges[edgeIndex];
-    const connected = Boolean(selectedNodeId && trace.edges.has(edgeIndex));
+    const connected = Boolean(selectedNodeId && traceMode!=="all" && trace.edges.has(edgeIndex));
     const focused = !focusedType || nodeById.get(edge?.source)?.type === focusedType || nodeById.get(edge?.target)?.type === focusedType;
-    group.classList.toggle("dimmed", Boolean(selectedNodeId && !connected));
+    group.classList.toggle("filtered", Boolean(excludedTypes.has(nodeById.get(edge?.source)?.type) || excludedTypes.has(nodeById.get(edge?.target)?.type)));
+    group.classList.toggle("dimmed", Boolean(selectedNodeId && traceMode!=="all" && !connected));
     group.classList.toggle("focus-dimmed", Boolean(focusedType && !focused));
     group.classList.toggle("selected", group.dataset.edgeId === selectedEdgeId);
     group.setAttribute("aria-pressed", String(group.dataset.edgeId === selectedEdgeId));
@@ -2708,30 +2806,17 @@ function setViewportTransform() {
   const percent = transform.scale * 100;
   byId("zoom-label").textContent = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
 }
-function stopFitAnimation() {
+function stopFitAnimation({ retainRestore = false } = {}) {
+  if (!retainRestore) pendingGraphRestore = null;
   fitAnimationSequence += 1;
   if (fitAnimationFrame) cancelAnimationFrame(fitAnimationFrame);
   fitAnimationFrame = 0;
 }
-function fitGraph(animate = true) {
-  stopFitAnimation();
+function moveViewport(target, { animate = true, duration = 240, retainRestore = false } = {}) {
+  stopFitAnimation({ retainRestore });
+  lastGraphViewport = graphViewportSize();
   const sequence = fitAnimationSequence;
-  const graph = currentGraph();
-  const layout = layoutGraph(graph);
-  const positions = layout.positions;
-  const bounds = graphBounds(graph, positions, layout.dimensions);
-  const rect = byId("graph-stage").getBoundingClientRect();
-  if (!graph.nodes.length || rect.width < 1 || rect.height < 1) {
-    transform = { x: rect.width / 2, y: rect.height / 2, scale: 1 };
-    setViewportTransform();
-    return;
-  }
-  const scale = fitScaleForBounds(bounds, rect);
-  const target = {
-    x: (rect.width - bounds.width * scale) / 2 - bounds.x * scale,
-    y: (rect.height - bounds.height * scale) / 2 - bounds.y * scale,
-    scale,
-  };
+  const graph = currentGraph(), scope = editHistoryScope(), mode = viewMode;
   if (!animate || matchMedia("(prefers-reduced-motion: reduce)").matches) {
     transform = target;
     setViewportTransform();
@@ -2739,10 +2824,14 @@ function fitGraph(animate = true) {
   }
   const start = { ...transform };
   const began = performance.now();
-  const duration = 240;
   const step = (now) => {
     if (sequence !== fitAnimationSequence) return;
-    const progress = clamp((now - began) / duration, 0, 1);
+    if (currentGraph() !== graph || editHistoryScope() !== scope || viewMode !== mode) {
+      stopFitAnimation();
+      return;
+    }
+    const progress = matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? 1 : clamp((now - began) / duration, 0, 1);
     const eased = 1 - Math.pow(1 - progress, 3);
     transform = {
       x: start.x + (target.x - start.x) * eased,
@@ -2754,6 +2843,21 @@ function fitGraph(animate = true) {
     else fitAnimationFrame = 0;
   };
   fitAnimationFrame = requestAnimationFrame(step);
+}
+function fitGraph(animate = true) {
+  const graph = presentationGraph();
+  const bounds = graphGeometry.bounds(graph);
+  const rect = byId("graph-stage").getBoundingClientRect();
+  if (!graph.nodes.length || rect.width < 1 || rect.height < 1) {
+    moveViewport({ x: rect.width / 2, y: rect.height / 2, scale: 1 }, { animate: false });
+    return;
+  }
+  const scale = fitScaleForBounds(bounds, rect);
+  moveViewport({
+    x: (rect.width - bounds.width * scale) / 2 - bounds.x * scale,
+    y: (rect.height - bounds.height * scale) / 2 - bounds.y * scale,
+    scale,
+  }, { animate });
 }
 function zoomAt(nextScale, clientX, clientY) {
   stopFitAnimation();
@@ -2771,25 +2875,8 @@ function cardText(group, value, x, y, className, max) {
   text.textContent = truncate(value, max);
   group.append(text);
 }
-function renderGraph() {
-  const svgTimeline = byId("graph");
-  svgTimeline.classList.toggle("read-only-online", isOnlineSession() && !canMutateCurrent());
-  const resumeSvgTimeline = viewMode === "graph" && !motionPaused && !document.hidden;
-  try { svgTimeline.pauseAnimations(); svgTimeline.setCurrentTime(0); } catch {}
+function updateGraphEmptyState() {
   const graph = currentGraph();
-  const layout = layoutGraph(graph);
-  const positions = layout.positions;
-  const dimensions = layout.dimensions;
-  const edgeLayer = byId("edges-layer");
-  const nodeLayer = byId("nodes-layer");
-  edgeLayer.replaceChildren();
-  nodeLayer.replaceChildren();
-  const nodeCards = new Map();
-  const viewport = byId("viewport");
-  const previousDefinitions = viewport.querySelector("defs");
-  if (previousDefinitions) previousDefinitions.remove();
-  const definitions = svgElement("defs");
-  viewport.insertBefore(definitions, edgeLayer);
   const hasProject = Boolean(activeProject());
   const isEmpty = graph.nodes.length === 0;
   byId("empty-state").hidden = (isOnlineSession() && !hasProject) || !isEmpty;
@@ -2800,25 +2887,55 @@ function renderGraph() {
   byId("empty-state-create").textContent = hasProject ? "Add component" : "Add project";
   byId("node-count").textContent = isOnlineSession() && onlineState.status === "loading" && !hasProject ? "Opening map…" : graph.nodes.length + (graph.nodes.length === 1 ? " component" : " components");
   byId("graph-count-label").textContent = graph.nodes.length + " nodes / " + graph.edges.length + " edges";
-  const trace = traceRoutes(graph, selectedNodeId);
+}
+function renderGraph() {
+  if (viewMode === 'timeline') {
+    try { byId('graph').pauseAnimations(); } catch {}
+    animateStructure=false;
+    updateGraphEmptyState();
+    renderTimelineView();
+    return;
+  }
+  const svgTimeline = byId("graph");
+  svgTimeline.classList.toggle("read-only-online", isOnlineSession() && !canMutateCurrent());
+  const resumeSvgTimeline = viewMode === "graph" && !motionPaused && !document.hidden;
+  try { svgTimeline.pauseAnimations(); svgTimeline.setCurrentTime(0); } catch {}
+  const graph = presentationGraph();
+  const geometryEntry = graphGeometry.get(graph);
+  const layout = geometryEntry.layout;
+  const positions = layout.positions;
+  const dimensions = layout.dimensions;
+  const edgeLayer = byId("edges-layer");
+  const nodeLayer = byId("nodes-layer");
+  edgeLayer.replaceChildren();
+  nodeLayer.replaceChildren();
+  const nodeCards = new Map();
+  const edgeGroups = new Map();
+  const viewport = byId("viewport");
+  const previousDefinitions = viewport.querySelector("defs");
+  if (previousDefinitions) previousDefinitions.remove();
+  const definitions = svgElement("defs");
+  viewport.insertBefore(definitions, edgeLayer);
+  updateGraphEmptyState();
+  const trace = traceRoutes(graph, selectedNodeId, traceMode);
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const visible = new Set(graph.nodes.filter((node) => !excludedTypes.has(node.type)).map((node) => node.id));
-  const matches = new Set(graph.nodes.filter((node) => !searchTerm || nodeSearchText(node).includes(searchTerm)).map((node) => node.id));
+  const matches = new Set(graph.nodes.filter((node) => !searchTerm || nodeMatchesQuery(node,searchTerm)).map((node) => node.id));
   const animationAllowed = viewMode === "graph"
     && graphMotionAllowed(graph)
     && !matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const routingLanes = edgeRoutingLanes(graph.edges);
   const drawMotion = animateStructure && animationAllowed && !motionPaused;
   for (const node of graph.nodes) {
     const position = positions.get(node.id);
     const size = dimensions.get(node.id);
     const group = svgElement("g", { class: "node-card", "data-node-id": node.id, "data-node-type": node.type, transform: "translate(" + position.x + " " + position.y + ")", tabindex: 0, role: "button", "aria-label": node.junction ? "Branch junction, " + node.label : node.label + ", " + node.type });
+    if (node.viewGroup) group.classList.add("view-group-card");
     const accent = graphTypeAccent(node.type);
     group.style.setProperty("--node-accent", accent);
     if (node.id === selectedNodeId) group.classList.add("selected");
     if (!visible.has(node.id)) group.classList.add("filtered");
     if (searchTerm && !matches.has(node.id)) group.classList.add("dimmed");
-    if (selectedNodeId && !trace.nodes.has(node.id)) group.classList.add("dimmed");
+    if (selectedNodeId && traceMode!=="all" && !trace.nodes.has(node.id)) group.classList.add("dimmed");
     if (focusedType && node.type !== focusedType) group.classList.add("focus-dimmed");
     if (matches.has(node.id) && searchTerm) group.classList.add("search-hit");
     if (drawMotion) group.classList.add("entering");
@@ -2923,6 +3040,7 @@ function renderGraph() {
       }
       group.append(agentBeam);
     }    group.addEventListener("click", () => {
+      if (node.viewGroup) { toggleGroup(node.viewGroup); return; }
       selectedEdgeId = null;
       touchSelectedEdge = null;
       hideGraphContextMenu();
@@ -2933,13 +3051,14 @@ function renderGraph() {
     group.addEventListener("animationend", (event) => {
       if (event.animationName === "atlas-card-in") group.classList.remove("entering");
     });
-    group.addEventListener("dblclick", (event) => { event.stopPropagation(); openNodeEditor(node.id); });
+    group.addEventListener("dblclick", (event) => { event.stopPropagation(); if (!node.viewGroup) openNodeEditor(node.id); });
     group.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      showNodeContextMenu(node.id, event.clientX, event.clientY, group);
+      if (!node.viewGroup) showNodeContextMenu(node.id, event.clientX, event.clientY, group);
     });
     group.addEventListener("keydown", (event) => {
+      if (node.viewGroup) { if (["Enter"," "].includes(event.key)) {event.preventDefault();toggleGroup(node.viewGroup);} return; }
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         touchSelectedEdge = null;
@@ -2960,7 +3079,7 @@ function renderGraph() {
   const minX = graph.nodes.length ? Math.min(...[...positions.values()].map((point) => point.x)) : 0;
   const maxX = graph.nodes.length ? Math.max(...[...positions.values()].map((point) => point.x)) : 1;
   graph.edges.forEach((edge, index) => {
-    const geometry = edgeGeometry(edge, index, positions, dimensions, routingLanes.get(index));
+    const geometry = graphGeometry.edge(graph, index, geometryEntry);
     if (!geometry) return;
     const sourceNode = nodeById.get(edge.source);
     const targetNode = nodeById.get(edge.target);
@@ -2970,10 +3089,10 @@ function renderGraph() {
     const group = svgElement("g", { class: "edge-group", "data-edge-index": index, "data-edge-id": edge.id, "data-source-type": sourceNode?.type || "component", tabindex: 0, role: "button", "aria-pressed": String(selectedEdgeId === edge.id), "aria-label": (sourceNode?.label || edge.source) + " to " + (targetNode?.label || edge.target) + (hasLabel ? ": " + fullLabel : ", unlabeled connection") });
     if (selectedEdgeId === edge.id) group.classList.add("selected");
     if (!visible.has(edge.source) || !visible.has(edge.target)) group.classList.add("filtered");
-    if (selectedNodeId && !trace.edges.has(index)) group.classList.add("dimmed");
+    if (selectedNodeId && traceMode!=="all" && !trace.edges.has(index)) group.classList.add("dimmed");
     const focused = !focusedType || sourceNode?.type === focusedType || targetNode?.type === focusedType;
     if (focusedType && !focused) group.classList.add("focus-dimmed");
-    const connected = Boolean(selectedNodeId && trace.edges.has(index));
+    const connected = Boolean(selectedNodeId && traceMode!=="all" && trace.edges.has(index));
     if (connected) group.classList.add("trace-label");
     const path = svgElement("path", { class: "edge-path", d: geometry.path });
     if (connected) path.classList.add("connected");
@@ -3007,6 +3126,7 @@ function renderGraph() {
       if (edgePointerActivation?.pointerId === event.pointerId) edgePointerActivation = null;
     });
     group.addEventListener("click", (event) => {
+      if(edge.viewAggregate){showToast("Expand the connected groups to inspect individual relationships.");return;}
       const pointerDownType = edgePointerActivation?.pointerType || "";
       edgePointerActivation = null;
       const touchActivation = isTouchClick(event, pointerDownType);
@@ -3016,14 +3136,16 @@ function renderGraph() {
       renderInspector();
       refreshEdgeSelection();
     });
-    group.addEventListener("dblclick", (event) => { event.stopPropagation(); openEdgeEditor(edge.id); });
-    group.addEventListener("contextmenu", (event) => { event.preventDefault(); event.stopPropagation(); showEdgeContextMenu(edge.id, event.clientX, event.clientY); });
+    group.addEventListener("dblclick", (event) => { event.stopPropagation(); if (!edge.viewAggregate) openEdgeEditor(edge.id); });
+    group.addEventListener("contextmenu", (event) => { event.preventDefault(); event.stopPropagation(); if (!edge.viewAggregate) showEdgeContextMenu(edge.id, event.clientX, event.clientY); });
     group.addEventListener("keydown", (event) => {
+      if(edge.viewAggregate){if(["Enter"," ","F2"].includes(event.key)){event.preventDefault();showToast("Expand the connected groups to inspect individual relationships.");}return;}
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectedNodeId = null; selectedEdgeId = selectedEdgeId === edge.id ? null : edge.id; touchSelectedEdge = null; renderInspector(); refreshEdgeSelection(); }
       else if (event.key === "F2") openEdgeEditor(edge.id);
       else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); showEdgeContextMenu(edge.id, event.clientX || null, event.clientY || null); }
     });
     edgeLayer.append(group);
+    edgeGroups.set(index,group);
     const sourceX = positions.get(edge.source).x;
     const delay = maxX === minX ? 0 : clamp((sourceX - minX) / Math.max(1, maxX - minX) * 1.3, 0, 1.3);
     if (drawMotion && !connected) {
@@ -3087,15 +3209,15 @@ function renderGraph() {
       }
     }
   });
+  mountedGraph=graph;mountedCards=nodeCards;mountedEdges=edgeGroups;
   animateStructure = false;
   setViewportTransform();
   if (resumeSvgTimeline) { try { svgTimeline.unpauseAnimations(); } catch {} }
-  if (viewMode === "timeline") renderTimelineView();
 }
 function inspectorEdgeContext(edge) {
   const project = activeProject();
   if (!project) return null;
-  const positions = layoutGraph(project.graph).positions;
+  const positions = graphGeometry.get(project.graph).layout.positions;
   const source = positions.get(edge.source) || { x: 0, y: 0 };
   const target = positions.get(edge.target) || source;
   return {
@@ -3147,6 +3269,7 @@ function renderTouchEdgeInspector(edge, container) {
   container.append(body);
 }
 function renderInspector() {
+  explorationControls?.update();
   const container = byId("inspector-content");
   const graph = currentGraph();
   const node = graph.nodes.find((item) => item.id === selectedNodeId);
@@ -3220,7 +3343,7 @@ function renderInspector() {
     head.append(plain("span", "connection-arrow", isOutgoing ? "Outgoing" : "Incoming"));
     const name = plain("button", "connection-name", other?.label || otherId);
     name.type = "button";
-    name.addEventListener("click", () => { selectedNodeId = otherId; renderInspector(); renderGraph(); });
+    name.addEventListener("click", () => focusComponent(otherId));
     head.append(name);
     const relationText = edge.label || edge.type || "Relationship not labeled";
     const relation = plain(canMutateCurrent() ? "button" : "span", "connection-label", relationText);
@@ -3252,9 +3375,61 @@ function renderInspector() {
   body.append(actions);
   container.append(body);
 }
+function refreshTimelinePresentation() {
+  const graph = presentationGraph(),
+    byNode = new Map(graph.nodes.map((node) => [node.id, node]));
+  const trace = traceRoutes(graph, selectedNodeId, traceMode);
+  const host = byId("timeline-view");
+  let visible = 0;
+  for (const card of host.querySelectorAll(".timeline-node-card")) {
+    const node = byNode.get(card.dataset.nodeId);
+    if (!node) continue;
+    card.hidden =
+      excludedTypes.has(node.type) || !nodeMatchesQuery(node, searchTerm);
+    card.classList.toggle("selected", node.id === selectedNodeId);
+    card.classList.toggle(
+      "focus-dimmed",
+      Boolean(focusedType && node.type !== focusedType),
+    );
+    card.classList.toggle(
+      "trace-dimmed",
+      Boolean(
+        selectedNodeId && traceMode !== "all" && !trace.nodes.has(node.id),
+      ),
+    );
+    card
+      .querySelector(".timeline-node-select")
+      ?.setAttribute("aria-pressed", String(node.id === selectedNodeId));
+  }
+  for (const stage of host.querySelectorAll(".timeline-stage")) {
+    const count = [...stage.querySelectorAll(".timeline-node-card")].filter(
+      (card) => !card.hidden,
+    ).length;
+    stage.hidden = !count;
+    visible += count;
+    const label = stage.querySelector(".timeline-stage-count");
+    if (label)
+      label.textContent = count + (count === 1 ? " component" : " components");
+    for (const jump of host.querySelectorAll(".timeline-step-button"))
+      if (jump.getAttribute("aria-controls") === stage.id) jump.hidden = !count;
+  }
+  let empty = host.querySelector(".timeline-search-empty");
+  if (!empty) {
+    empty = plain(
+      "p",
+      "timeline-empty timeline-search-empty",
+      "No components match the current search and filters.",
+    );
+    host.append(empty);
+  }
+  empty.hidden = visible > 0 || !graph.nodes.length;
+}
+
 function renderTimelineView() {
   const host = byId("timeline-view");
   if (!host) return;
+  const projected=presentationGraph();
+  if(mountedTimelineGraph===projected && host.firstElementChild){refreshTimelinePresentation();return;}
   const oldScroller = host.querySelector(".timeline-scroller");
   const oldOverview = host.querySelector(".timeline-overview");
   const activeElement = document.activeElement;
@@ -3265,17 +3440,18 @@ function renderTimelineView() {
   const scrollLeft = oldScroller?.scrollLeft || 0;
   const scrollTop = oldScroller?.scrollTop || 0;
   const overviewScroll = oldOverview?.scrollLeft || 0;
-  host.replaceChildren(renderTimeline(currentGraph(), {
+  host.replaceChildren(renderTimeline(projected, {
     selectedNodeId,
-    excludedTypes,
-    searchTerm,
     focusedType,
     onSelectNode(nodeId) {
+      const item=projected.nodes.find(node=>node.id===nodeId);if(item?.viewGroup){toggleGroup(item.viewGroup);return;}
       selectedNodeId = nodeId;
       renderInspector();
       renderGraph();
     },
   }));
+  mountedTimelineGraph=projected;
+  refreshTimelinePresentation();
   const scroller = host.querySelector(".timeline-scroller");
   const overview = host.querySelector(".timeline-overview");
   if (scroller) { scroller.scrollLeft = scrollLeft; scroller.scrollTop = scrollTop; }
@@ -3297,6 +3473,7 @@ function updateViewMode() {
   byId("show-timeline").setAttribute("aria-pressed", String(timeline));
 }
 function setViewMode(mode) {
+  stopFitAnimation();
   viewMode = mode === "timeline" ? "timeline" : "graph";
   updateViewMode();
   renderGraph();
@@ -3311,6 +3488,7 @@ function updateViewerSidebar() {
   sidebarDrawer.updateLabel();
 }
 function updateWorkspaceActionAvailability() {
+  mapVersionTools?.update();
   updateViewerSidebar();
   updateEditHistoryControls();
   const hasProject = Boolean(activeProject());
@@ -3349,6 +3527,7 @@ function updateWorkspaceActionAvailability() {
   });
 }
 function renderAll({ preserveGraph = false } = {}) {
+  syncExplorationScope();
   const historyProject = activeProject();
   if (historyProject) editHistory.ensure(editHistoryScope(historyProject), historyProject.graph);
   renderLibrary();
@@ -3357,6 +3536,8 @@ function renderAll({ preserveGraph = false } = {}) {
   renderFilters();
   updateViewMode();
   if (!preserveGraph) renderGraph();
+  componentFinder?.refresh();
+  explorationControls?.update();
   renderInspector();
   localRecoveryMode();
   renderAutosaveAdmissionNotice();
@@ -3376,7 +3557,7 @@ function selectProject(id) {
   }
   libraryMode = "local";
   cancelWorkspaceRestore();
-  workspaceNavigation.rememberLocal();
+  workspaceNavigation.rememberLocal(id);
   cancelPendingShareLoad();
   cancelActiveGesture();
   hideGraphContextMenu();
@@ -3464,7 +3645,7 @@ function startPortDrag(event, nodeId) {
   hideGraphContextMenu();
   const project = activeProject();
   const graph = currentGraph();
-  dragState = { kind: "connection", projectId: project?.id || "", graph, sourceId: nodeId, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, targetId: "", lastEvent: event, layout: layoutGraph(graph) };
+  dragState = { kind: "connection", projectId: project?.id || "", graph, sourceId: nodeId, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, targetId: "", lastEvent: event, layout: graphGeometry.get(presentationGraph()).layout };
   byId("graph").classList.add("is-connecting");
   try { byId("graph").setPointerCapture(event.pointerId); } catch {}
   updatePortPreview(event);
@@ -3478,6 +3659,7 @@ function cancelActiveConnection() {
   try { byId("graph").releasePointerCapture(pointerId); } catch {}
 }
 function cancelActiveGesture() {
+  dragPaint.cancel();
   const state = dragState;
   if (!state) return;
   dragState = null;
@@ -3504,7 +3686,7 @@ function beginNodeDrag(event, nodeId) {
   const project = activeProject();
   const graph = project?.graph;
   const node = graph?.nodes.find((item) => item.id === nodeId);
-  const point = layoutGraph(graph || emptyGraph()).positions.get(nodeId);
+  const point = graphGeometry.get(presentationGraph()).layout.positions.get(nodeId);
   if (!point || !project || !node) return;
   const world = currentStageWorldPoint(event.clientX, event.clientY);
   dragState = { kind: "node", id: nodeId, projectId: project.id, graphRef: graph, originalPosition: node.position ? { ...node.position } : null, baselineText: serializeGraphJson(graph), offsetX: world.x - point.x, offsetY: world.y - point.y, startX: event.clientX, startY: event.clientY, moved: false, pointerId: event.pointerId };
@@ -3548,10 +3730,11 @@ function movePointer(event) {
   };
   dragState.moved = dragState.moved || movement > 3;
   animateStructure = false;
-  renderGraph();
+  dragPaint.schedule({graph:project.graph,projectId:project.id,nodeId:node.id,position:{...node.position}});
 }
 function endPointer(event) {
   if (!dragState || dragState.pointerId !== event.pointerId) return;
+  if (event.type === "pointerup") dragPaint.flush(); else dragPaint.cancel();
   if (dragState.kind === "connection") {
     const state = dragState;
     const targetPort = portInputAt(event.clientX, event.clientY);
@@ -3623,25 +3806,6 @@ function autoLayout() {
   renderInspector();
   fitGraph(true);
   persist();
-}
-function bindDialogBackdropClose(dialog, close = () => dialog.close("cancel")) {
-  let backdropPress = false;
-  const isBackdrop = (event) => {
-    const rect = dialog.getBoundingClientRect();
-    return event.target === dialog
-      && (event.clientX < rect.left || event.clientX > rect.right
-        || event.clientY < rect.top || event.clientY > rect.bottom);
-  };
-  dialog.addEventListener("pointerdown", (event) => {
-    backdropPress = event.button === 0 && isBackdrop(event);
-  });
-  dialog.addEventListener("pointercancel", () => { backdropPress = false; });
-  dialog.addEventListener("click", (event) => {
-    const dismiss = backdropPress && isBackdrop(event);
-    backdropPress = false;
-    if (dismiss) close();
-  });
-  dialog.addEventListener("close", () => { backdropPress = false; });
 }
 function openProjectEditor() {
   if (!requireMutation("edit project details")) return;
@@ -3729,7 +3893,7 @@ async function openFlowExample() {
   if (isOnlineSession() && !returnToLocalWorkspace()) return;
   libraryMode = "local";
   cancelWorkspaceRestore();
-  workspaceNavigation.rememberLocal();
+  workspaceNavigation.rememberLocal(activeId);
   cancelPendingShareLoad();
   const example = SAMPLE_GRAPHS.find((graph) => graph.project.name === FLOW_EXAMPLE_NAME);
   if (!example) { showToast("The request-flow example is unavailable.", "error"); return; }
@@ -3767,7 +3931,7 @@ function confirmProjectDelete() {
   const resumeShareLoad = projectEditResumeShareLoad;
   projectEditResumeShareLoad = null;
   byId("project-modal").close();
-  openConfirm("Delete this project?", "This removes " + name + " and its map from this browser's Project Atlas library.", "Delete project", () => {
+  openConfirm("Delete this project?", "This removes " + name + ", its map and its named checkpoints from this browser's Project Atlas library. Download important versions first.", "Delete project", () => {
     if (!requireMutation("delete a project")) return;
     if (localProjectHasUnresolvedCloudCandidate(context.projectId)) {
       showToast("Resolve the pending Cloud Workspace save before deleting this local map.", "error");
@@ -3804,7 +3968,7 @@ function confirmProjectDelete() {
     }
     renderAll();
     if (deletion.wasActive) fitGraph(true);
-    persist();
+    void persist().then(saved => { if (saved) return removeMapCheckpoints("local:" + context.projectId); });
   }, null, resumeShareLoad);
 }
 function nodeCardElement(nodeId) {
@@ -4021,9 +4185,9 @@ function saveNode() {
   setDialogFocusTarget("editor-modal", { nodeId: savedNode.id, fallbackGraph: true });
   byId("editor-modal").close();
   nodeEditContext = null;
-  animateStructure = true;
+  animateStructure = !existing;
   renderAll();
-  fitGraph(true);
+  if (!existing) fitGraph(true);
   persist();
 }
 function setDialogFocusTarget(dialogId, target) {
@@ -4365,9 +4529,9 @@ function saveEdge() {
   setDialogFocusTarget("edge-modal", { edgeId: edge.id, fallbackGraph: true });
   byId("edge-modal").close();
   edgeEditContext = null;
-  animateStructure = true;
+  animateStructure = !existing;
   renderAll();
-  fitGraph(true);
+  if (!existing) fitGraph(true);
   persist();
 }
 function confirmDeleteEdgeSnapshot(context, returnFocus = null) {
@@ -4590,8 +4754,8 @@ function requestClearData() {
     return;
   }
   const message = recoveryMode && recoveryText
-    ? "This permanently removes the saved Project Atlas library from this browser. Download the saved-data backup first if you need to preserve it. Theme and inspector preferences remain; the workspace will be empty."
-    : "This removes the saved Project Atlas library from this browser. Theme and inspector preferences remain; the workspace will be empty. You can add or import a map, or opt in to View example flow later.";
+    ? "This removes the saved local library and its named checkpoints from this browser. Download the saved-data backup first. Unsaved recovery copies and cloud maps remain protected; theme and inspector preferences remain."
+    : "This removes the saved local library and its named checkpoints from this browser. Unsaved recovery copies, cloud maps, theme and inspector preferences remain. Download important versions first.";
   openConfirm("Clear local data and start fresh?", message, "Clear and start fresh", async () => {
     const pending = projects.find((project) => localProjectHasUnresolvedCloudCandidate(project.id));
     if (pending) {
@@ -4610,6 +4774,7 @@ function requestClearData() {
     confirmResumeShareLoad = null;
     const result = await localLibrary.clear();
     if (!result.ok) { showToast(result.error, "error"); return; }
+    const checkpointsRemoved = await Promise.all(projects.map(project => removeMapCheckpoints("local:" + project.id)));
     recoveryMode = false;
     recoveryText = "";
     lastStorageError = "";
@@ -4636,7 +4801,9 @@ function requestClearData() {
     renderAll();
     if (!isOnlineSession()) fitGraph(false);
     if (location.hash.startsWith("#map=")) void openIncomingShare();
-    showToast("Local map data cleared. Your workspace is empty; add or import a map when ready.");
+    showToast(checkpointsRemoved.every(Boolean)
+      ? "Local maps and their checkpoints cleared. Unsaved recovery copies remain protected."
+      : "Local maps cleared, but this browser blocked removing some device checkpoints.", checkpointsRemoved.every(Boolean) ? "info" : "error");
   });
 }
 function downloadRecovery() {
@@ -5016,11 +5183,17 @@ function toggleMotion() {
   updateMotionButton();
 }
 function attachEvents() {
+  byId("library-search").addEventListener("input",event=>{librarySearchTerm=event.target.value;renderLibrary();});
+  byId('inspector-toggle').addEventListener('click',()=>{
+    compactInspectorPreference=!document.documentElement.classList.contains('graph-inspector-open');
+    refreshFullscreenInspector();
+  });
   byId("download-local-tab").addEventListener("click", downloadLocalTabBackup);
   byId("reload-local-library").addEventListener("click", reloadLocalLibrary);
   window.addEventListener("focus", scheduleLocalLibrarySync);
   window.addEventListener("storage", event => {
     if (event.key === LIBRARY_STORAGE_KEY || event.key === null) scheduleLocalLibrarySync();
+    if(event.key===LIBRARY_PREFERENCES_KEY){libraryPreferences.reload();renderLibrary();}
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleLocalLibrarySync(); });
   document.addEventListener("close", scheduleLocalLibrarySync, true);
@@ -5045,9 +5218,12 @@ function attachEvents() {
   byId("map-settings-dialog").querySelectorAll("[data-map-settings-close]").forEach((button) => {
     button.addEventListener("click", closeMapSettings);
   });
-  bindDialogBackdropClose(byId("map-settings-dialog"), closeMapSettings);
-  bindDialogBackdropClose(byId("project-modal"));
-  bindDialogBackdropClose(byId("editor-modal"));
+  for (const dialog of document.querySelectorAll("dialog.modal")) {
+    // Account/Settings use the same helper in their shared controller so the
+    // landing page gets identical dismissal and aria-expanded cleanup.
+    if (["account-modal", "settings-modal"].includes(dialog.id)) continue;
+    bindDialogBackdropClose(dialog, dialog.id === "map-settings-dialog" ? closeMapSettings : undefined);
+  }
   byId("map-settings-dialog").addEventListener("close", () => {
     clearMapSettingsProgress();
     mapSettingsReadCancel?.();
@@ -5141,7 +5317,7 @@ function attachEvents() {
   });
   byId("search").addEventListener("input", (event) => {
     searchTerm = event.target.value.trim().toLowerCase();
-    renderGraph();
+    refreshGraphPresentation();
   });
   const filterGroup = byId("type-filters");
   filterGroup.addEventListener("wheel", (event) => scrollTypeFiltersWithWheel(filterGroup, event), { passive: false });
@@ -5378,7 +5554,330 @@ function attachEvents() {
     } catch {}
   });
 }
+function syncExplorationScope() {
+  const scope = editHistoryScope();
+  if (scope === explorationScope) return;
+  explorationScope = scope;
+  collapsedGroups = new Set();
+  traceMode = "downstream";
+  projectionMemo = null;
+  componentFinder?.close();
+}
+function presentationGraph() {
+  const graph = currentGraph();
+  if (!collapsedGroups.size) return graph;
+  const key = JSON.stringify([
+    [...collapsedGroups].sort(),
+    [...excludedTypes].sort(),
+  ]);
+  if (projectionMemo?.source === graph && projectionMemo.key === key)
+    return projectionMemo.graph;
+  const projected = projectCollapsedGroups(graph, collapsedGroups, {
+    excludedTypes,
+  });
+  projectionMemo = { source: graph, key, graph: projected };
+  return projected;
+}
+function toggleGroup(name) {
+  if (collapsedGroups.has(name)) collapsedGroups.delete(name);
+  else {
+    collapsedGroups.add(name);
+    if (
+      currentGraph().nodes.some(
+        (node) => node.id === selectedNodeId && node.group === name,
+      )
+    )
+      selectedNodeId = null;
+  }
+  selectedEdgeId = null;
+  touchSelectedEdge = null;
+  projectionMemo = null;
+  animateStructure = false;
+  renderGraph();
+  renderInspector();
+  explorationControls?.update();
+  fitGraph(true);
+  byId(viewMode === "timeline" ? "show-timeline" : "graph").focus({
+    preventScroll: true,
+  });
+}
+function focusComponent(id) {
+  const node = currentGraph().nodes.find((node) => node.id === id);
+  if (!node) return;
+  if (collapsedGroups.delete(node.group)) {
+    projectionMemo = null;
+    animateStructure = false;
+    renderGraph();
+  }
+  excludedTypes.delete(node.type);
+  focusedType = "";
+  lockedType = "";
+  selectedNodeId = id;
+  selectedEdgeId = null;
+  touchSelectedEdge = null;
+  renderFilters();
+  renderInspector();
+  refreshGraphPresentation();
+  if (viewMode === "timeline") {
+    const target = [
+      ...byId("timeline-view").querySelectorAll(".timeline-node-card"),
+    ].find((card) => card.dataset.nodeId === id);
+    target?.scrollIntoView({
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+    target
+      ?.querySelector(".timeline-node-select")
+      ?.focus({ preventScroll: true });
+    return;
+  }
+  stopFitAnimation();
+  const geometry = graphGeometry.get(presentationGraph()).layout,
+    point = geometry.positions.get(id),
+    size = geometry.dimensions.get(id);
+  if (!point) return;
+  const rect = byId("graph-stage").getBoundingClientRect();
+  const overlay =
+    document.documentElement.classList.contains("graph-inspector-open") &&
+    (graphFullscreen.isActive() ||
+      document.documentElement.classList.contains("compact-inspector"));
+  const available = overlay
+    ? Math.max(
+        180,
+        rect.width -
+          Math.min(
+            byId("inspector").getBoundingClientRect().width + 28,
+            rect.width * 0.55,
+          ),
+      )
+    : rect.width;
+  const scale = Math.max(transform.scale, 0.85);
+  moveViewport({
+    x: available / 2 - (point.x + size.width / 2) * scale,
+    y: rect.height / 2 - (point.y + size.height / 2) * scale,
+    scale,
+  }, { duration: 420 });
+  focusGraphTarget({ nodeId: id, fallbackGraph: true });
+}
+function initExploration() {
+  componentFinder = initComponentFinder({
+    input: byId("search"),
+    panel: byId("component-results"),
+    getGraph: currentGraph,
+    getFilters: () => ({ excludedTypes, collapsedGroups }),
+    onChoose: focusComponent,
+  });
+  explorationControls = initExplorationControls({
+    getState: () => ({
+      graph: currentGraph(),
+      selectedId: selectedNodeId,
+      mode: traceMode,
+      collapsed: collapsedGroups,
+    }),
+    onMode(mode) {
+      traceMode = mode;
+      refreshGraphPresentation();
+      explorationControls.update();
+    },
+    onGroup: toggleGroup,
+    onReset() {
+      collapsedGroups.clear();
+      projectionMemo = null;
+      traceMode = "downstream";
+      excludedTypes.clear();
+      focusedType = "";
+      lockedType = "";
+      selectedNodeId = null;
+      selectedEdgeId = null;
+      searchTerm = "";
+      byId("search").value = "";
+      componentFinder.close();
+      animateStructure = false;
+      renderFilters();
+      renderGraph();
+      renderInspector();
+    },
+  });
+}
+function mapVersionContext() {
+  const project = activeProject();
+  const cloud = isOnlineSession();
+  const ownerUid = cloud ? currentAccountUid() : "";
+  const owner = onlineWorkspace?.ownerId || onlineState.ownerUid || "";
+  return {
+    key: editHistoryScope(project),
+    graph: project?.graph,
+    name: project?.graph.project.name || "",
+    ownerUid,
+    hasProject: Boolean(project),
+    shared: currentWorkspaceActions().hideEditing,
+    canEdit: Boolean(
+      project &&
+      canMutateCurrent() &&
+      !onlineUiUnavailable &&
+      (!cloud || (ownerUid && ownerUid === owner)),
+    ),
+  };
+}
+async function removeMapCheckpoints(scope) {
+  if (!workspaceSafety) return true;
+  try {
+    await workspaceSafety.removeCheckpointScope(scope);
+    return true;
+  } catch {
+    showToast(
+      "The map was removed, but this browser blocked removing its device checkpoints.",
+      "error",
+    );
+    return false;
+  }
+}
+function initMapVersions() {
+  mapVersionTools = initMapVersionTools({
+    store: workspaceSafety,
+    getContext: mapVersionContext,
+    getPositions: () => graphGeometry.get(currentGraph()).layout.positions,
+    download: downloadText,
+    notify: showToast,
+    onApply: async (input, { context }) => {
+      if (!sameMapContext(context, mapVersionContext()))
+        throw new Error(
+          "The map or account changed. Review the changes again.",
+        );
+      const project = activeProject();
+      const candidate = normalizeEditableGraph(input, {
+        baselineGraph: context.graph,
+      });
+      const changes = compareGraphVersions(context.graph, candidate);
+      const oldEdges = new Map(
+        context.graph.edges.map((edge) => [edge.id, edge]),
+      );
+      const topology =
+        changes.nodes.added.length ||
+        changes.nodes.removed.length ||
+        changes.edges.added.length ||
+        changes.edges.removed.length ||
+        changes.edges.changed.some((edge) => {
+          const old = oldEdges.get(edge.id);
+          return old.source !== edge.source || old.target !== edge.target;
+        });
+      editHistory.ensure(editHistoryScope(project), context.graph);
+      project.graph = candidate;
+      project.updatedAt = Date.now();
+      if (!candidate.nodes.some((node) => node.id === selectedNodeId))
+        selectedNodeId = null;
+      if (!candidate.edges.some((edge) => edge.id === selectedEdgeId))
+        selectedEdgeId = null;
+      collapsedGroups.clear();
+      projectionMemo = null;
+      excludedTypes.clear();
+      focusedType = "";
+      lockedType = "";
+      searchTerm = "";
+      byId("search").value = "";
+      componentFinder?.close();
+      animateStructure = Boolean(topology);
+      renderAll();
+      if (topology) fitGraph(true);
+      const mode = isOnlineSession() ? "cloud" : "local";
+      const saved = await persist();
+      return { saved, mode };
+    },
+  });
+}
+function initWorkspaceSafety() {
+  let session = null,
+    tabId = "";
+  try {
+    session = window.sessionStorage;
+    tabId =
+      session.getItem("atlas.local.recovery-tab.v1") || crypto.randomUUID();
+    session.setItem("atlas.local.recovery-tab.v1", tabId);
+  } catch {
+    tabId = "";
+  }
+  workspaceSafety = createWorkspaceSafety({ fallback: session });
+  backupTools = initBackupTools({
+    store: workspaceSafety,
+    tabId,
+    download: downloadText,
+    notify: showToast,
+    getState: () => ({
+      projects,
+      activeId,
+      unreadable: recoveryMode && Boolean(recoveryText),
+      original: recoveryText,
+      canManageLocal:
+        libraryMode === "local" &&
+        !currentWorkspaceActions().hideEditing &&
+        !onlineRoute,
+    }),
+    onRestore: async (backup, { recover = false } = {}) => {
+      if (
+        libraryMode !== "local" ||
+        currentWorkspaceActions().hideEditing ||
+        onlineRoute
+      )
+        throw new Error("Choose Local Workspace before restoring maps.");
+      if (isOnlineSession() && !returnToLocalWorkspace())
+        throw new Error(
+          "Preserve your pending cloud changes before restoring local maps.",
+        );
+      const unsaved = localLibrary.unsavedProjects(projects);
+      if (
+        localLibrary.hasUnsaved(projects) &&
+        !backupTools.safelyContains(unsaved)
+      ) {
+        const protectedDraft = await backupTools.captureUnsaved(
+          unsaved,
+          activeId,
+        );
+        if (!protectedDraft)
+          throw new Error(
+            "Download this tab's unsaved maps before restoring a different backup.",
+          );
+      }
+      const result = await localLibrary.mergeBackup(backup, { recover });
+      if (!result.ok) throw new Error(result.error);
+      projects = result.projects;
+      activeId = result.activeId;
+      recoveryMode = false;
+      recoveryText = "";
+      selectedNodeId = null;
+      selectedEdgeId = null;
+      searchTerm = "";
+      byId("search").value = "";
+      excludedTypes.clear();
+      focusedType = "";
+      lockedType = "";
+      viewMode = "graph";
+      animateStructure = true;
+      workspaceNavigation.rememberLocal(activeId);
+      cancelWorkspaceRestore();
+      cancelPendingShareLoad();
+      renderAll();
+      fitGraph(true);
+    },
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (
+      localLibrary.hasUnsaved(projects) &&
+      !backupTools.safelyContains(localLibrary.unsavedProjects(projects))
+    ) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+}
+
 function init() {
+  initWorkspaceSafety();
+  initExploration();
+  initMapVersions();
+  workspaceGuide=initWorkspaceGuide({storage:onlineStorage,getState:()=>({hasMaps:projects.length>0||Boolean(activeProject()),shared:currentWorkspaceActions().hideEditing||libraryMode!=="local"}),copyPrompt:()=>copyAgentPrompt(true),openImport,openExample:openFlowExample});
   const canonicalUrl = canonicalWorkspaceUrl(location.href);
   if (canonicalUrl !== location.href) history.replaceState(history.state, "", canonicalUrl);
   attachEvents();

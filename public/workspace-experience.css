@@ -1,0 +1,476 @@
+/* Workspace review features use the existing Atlas palette and modal geometry. */
+.local-backup-actions {
+  display: block;
+}
+.local-backup-actions[hidden] {
+  display: none;
+}
+#backup-menu-button {
+  justify-content: space-between;
+}
+#backup-menu-button .ui-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--atlas-muted);
+}
+.local-backup-actions .recovery-action {
+  color: var(--atlas-accent);
+}
+.local-backups-panel {
+  position: fixed;
+  inset: auto;
+  bottom: 12px;
+  margin: 0;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-card);
+  color: var(--atlas-foreground);
+  box-shadow: var(--shadow);
+}
+.backups-menu-heading {
+  padding: 8px 10px 13px;
+}
+.backups-menu-heading .eyebrow {
+  font-size: 8px;
+  color: var(--atlas-muted);
+}
+.backups-menu-heading h2 {
+  margin: 6px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.backups-menu-heading p {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.backup-menu-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 10px;
+  text-align: left;
+  background: transparent;
+  color: var(--atlas-foreground);
+}
+.backup-menu-action:hover,
+.backup-menu-action:focus-visible {
+  background: color-mix(in srgb, var(--atlas-foreground), transparent 94%);
+}
+.backup-menu-action:disabled {
+  opacity: 0.45;
+}
+.backup-menu-action .ui-icon {
+  flex: 0 0 17px;
+  margin-top: 2px;
+  color: var(--atlas-muted);
+}
+.backup-menu-action strong,
+.backup-menu-action small {
+  display: block;
+}
+.backup-menu-action strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.backup-menu-action small {
+  margin-top: 5px;
+  color: var(--atlas-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.local-backups-panel .workspace-guidance {
+  margin: 8px 10px 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--atlas-border);
+}
+.local-backups-panel .workspace-guidance summary {
+  font-size: 10px;
+  color: var(--atlas-muted);
+}
+.local-backups-panel .workspace-guidance summary:hover {
+  color: var(--atlas-foreground);
+}
+.local-backups-panel .workspace-guidance .field-hint {
+  line-height: 1.7;
+  color: var(--atlas-muted);
+}
+.local-draft-note {
+  font-size: 10px;
+  color: var(--atlas-muted);
+  line-height: 1.6;
+  margin: 6px 0;
+  max-width: 200px;
+}
+.backup-preview {
+  margin-top: 18px;
+}
+.backup-map-list {
+  padding-left: 18px;
+  max-height: 190px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--atlas-muted);
+}
+.safety-notice {
+  padding: 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  background: var(--atlas-canvas);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.safety-notice[hidden] {
+  display: none;
+}
+.safety-notice .setting-toggle {
+  margin-top: 14px;
+}
+.backup-preview:empty {
+  display: none;
+}
+#backup-dialog textarea {
+  resize: vertical;
+  max-height: 32vh;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+}
+#backup-dialog .field {
+  margin-top: 14px;
+}
+#backup-dialog .modal-foot {
+  flex-wrap: wrap;
+}
+/* Compact workspaces give the graph its full row; details float over it. */
+.inspector-toggle[hidden] {
+  display: none;
+}
+.compact-inspector .canvas-caption {
+  max-width: calc(100% - 230px);
+}
+.compact-inspector:not(.graph-fullscreen) .graph-workspace {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+.compact-inspector .inspector-resize {
+  display: none;
+}
+.compact-inspector:not(.graph-fullscreen) .inspector {
+  position: absolute;
+  display: flex;
+  top: 56px;
+  right: 22px;
+  bottom: 60px;
+  z-index: 12;
+  width: min(360px, calc(100% - 44px));
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  border-radius: 18px;
+  box-shadow: 0 16px 32px #0003;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(18px);
+  transition:
+    opacity 150ms ease,
+    transform 200ms ease,
+    visibility 0s linear 200ms;
+}
+.compact-inspector.graph-inspector-open .inspector {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
+}
+.compact-inspector.graph-inspector-wide .inspector {
+  width: min(640px, calc(100% - 44px));
+}
+@media (max-width: 820px) {
+  .compact-inspector:not(.graph-fullscreen) .graph-workspace {
+    display: grid;
+  }
+  .compact-inspector:not(.graph-fullscreen) .inspector {
+    right: 20px;
+    left: 20px;
+    width: auto;
+    bottom: 52px;
+    top: 54px;
+  }
+  .compact-inspector .canvas-caption {
+    max-width: calc(100% - 215px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .compact-inspector .inspector {
+    transition: none;
+  }
+}
+.component-search {
+  position: relative;
+  min-width: 150px;
+  flex: 0 1 240px;
+}
+.toolbar .component-search .search-field {
+  width: 100%;
+  max-width: none;
+}
+.finder-results {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 7px;
+  max-height: min(430px, 65vh);
+  overflow: auto;
+  border: 1px solid var(--atlas-border);
+  border-radius: 14px;
+  background: var(--atlas-card);
+  color: var(--atlas-foreground);
+  box-shadow: var(--shadow);
+  z-index: 40;
+}
+.finder-results[hidden] {
+  display: none;
+}
+.finder-count,
+.finder-hint {
+  font-size: 10px;
+  color: var(--atlas-muted);
+  padding: 5px 7px;
+  margin: 0;
+}
+.finder-hint {
+  border-top: 1px solid var(--atlas-border);
+  margin-top: 5px;
+}
+.finder-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--atlas-foreground);
+  padding: 10px 9px;
+  border-radius: 8px;
+}
+.finder-option strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.finder-option span,
+.finder-option small {
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  color: var(--atlas-muted);
+}
+.finder-option[aria-selected="true"],
+.finder-option:hover {
+  background: color-mix(in srgb, var(--atlas-accent), transparent 90%);
+}
+.finder-option[aria-selected="true"] {
+  outline: 1px solid color-mix(in srgb, var(--atlas-accent), transparent 55%);
+}
+.explore-panel {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(310px, calc(100vw - 16px));
+  max-height: 65vh;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-card);
+  color: var(--atlas-foreground);
+  box-shadow: var(--shadow);
+}
+.explore-panel h2 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.explore-panel h3 {
+  font-size: 12px;
+  margin: 20px 0 5px;
+}
+.explore-panel .field {
+  margin-top: 14px;
+}
+.explore-groups {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 18px;
+  max-height: 190px;
+  overflow: auto;
+}
+.group-fold-button {
+  border: 1px solid var(--atlas-border);
+  background: none;
+  color: var(--atlas-foreground);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-size: 11px;
+  text-align: left;
+}
+.group-fold-button:hover,
+.group-fold-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--atlas-accent), transparent 92%);
+}
+.view-group-card .card-bg {
+  stroke-dasharray: 5 3;
+}
+.view-group-card .card-port {
+  display: none;
+}
+.timeline-node-card.trace-dimmed {
+  opacity: 0.25;
+}
+.timeline-node-card[hidden],
+.timeline-stage[hidden],
+.timeline-step-button[hidden] {
+  display: none;
+}
+.graph-fullscreen .toolbar .component-search {
+  flex: 1 1 160px;
+  max-width: 280px;
+  min-width: 100px;
+  order: 0;
+}
+.graph-fullscreen .toolbar .component-search .search-field {
+  width: 100%;
+}
+.compact-inspector:not(.graph-inspector-open) .inspector {
+  visibility: hidden;
+  transition-delay: 0s;
+}
+@media (max-width: 820px) {
+  .toolbar .component-search {
+    flex: 1 1 100%;
+    max-width: none;
+    width: 100%;
+  }
+}
+.library-search {
+  display: block;
+  margin: 3px 0 12px;
+}
+.library-search[hidden] {
+  display: none;
+}
+.library-search input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--atlas-border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--atlas-foreground);
+  font-size: 11px;
+  padding: 8px 10px;
+}
+.library-search input::placeholder {
+  color: var(--atlas-quiet);
+}
+.project-updated {
+  display: block;
+  color: var(--atlas-quiet);
+  font-size: 9px;
+  line-height: 1.7;
+  margin-top: 2px;
+}
+.project-pin-mark {
+  font-size: 10px;
+  color: var(--atlas-accent);
+}
+.project-list-empty {
+  padding: 12px 4px;
+  color: var(--atlas-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.workspace-getting-started {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 28px 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 14px;
+  background: var(--atlas-card);
+}
+.workspace-getting-started[hidden] {
+  display: none;
+}
+.workspace-getting-started > div {
+  flex: 1;
+}
+.workspace-getting-started strong {
+  font-size: 12px;
+}
+.workspace-getting-started p {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--atlas-muted);
+}
+.guide-steps {
+  padding: 0;
+  list-style: none;
+  counter-reset: guide;
+  display: grid;
+  gap: 18px;
+  margin: 24px 0;
+}
+.guide-steps li {
+  position: relative;
+  padding-left: 38px;
+  counter-increment: guide;
+}
+.guide-steps li::before {
+  content: counter(guide, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  font-size: 11px;
+  color: var(--atlas-quiet);
+}
+.guide-steps strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.guide-steps p {
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--atlas-muted);
+  margin: 8px 0 12px;
+}
+.quick-guide .modal-shell {
+  max-width: 640px;
+}
+.graph-fullscreen .workspace-getting-started {
+  display: none;
+}
+@media (max-width: 820px) {
+  .workspace-getting-started {
+    margin: 0 12px 12px;
+    flex-wrap: wrap;
+  }
+  .workspace-getting-started > div {
+    flex: 1 1 80%;
+  }
+}

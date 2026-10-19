@@ -648,12 +648,10 @@ select { color: var(--atlas-foreground); }
 .toast-region[popover]{inset:auto auto 43px 50%;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 32px);height:auto;margin:0;padding:0;border:0;background:transparent;overflow:visible;pointer-events:none}
 .toast-region[popover]:not(:popover-open){display:none}
 .toast-region::backdrop{background:transparent;pointer-events:none}
-.map-settings-actions{min-height:34px;align-items:flex-start;align-content:start}
-@media(min-width:561px) and (max-width:700px){.map-settings-actions{min-height:76px}}
 @keyframes action-spin{to{transform:rotate(360deg)}}
 @keyframes action-appear{from{opacity:0}to{opacity:1}}
 html[data-action-page-hidden="true"] .action-spinner,html[data-action-page-hidden="true"] #save-status[aria-busy="true"]::before{animation-play-state:paused}
-@media(max-width:560px){.map-settings-actions{min-height:252px}.toast-region[popover]{bottom:18px}}
+@media(max-width:560px){.toast-region[popover]{bottom:18px}}
 @media(prefers-reduced-motion:reduce){.action-spinner,.action-progress,#save-status[aria-busy="true"]::before{animation:none}.toast{animation:none}}
 
 .action-progress.is-compact>span:last-child{display:none}
@@ -684,8 +682,10 @@ html[data-action-page-hidden="true"] #account-status[aria-busy="true"]::before,h
   .sidebar { z-index:80; width:min(280px,calc(100vw - 56px)); max-height:100vh; max-height:100dvh; overflow-y:auto; overscroll-behavior:contain; visibility:hidden; transition:transform .2s ease, visibility 0s linear .2s; }
   .sidebar.open { visibility:visible; transition:transform .2s ease, visibility 0s; }
   .sidebar-brand-row { flex-shrink:0; margin-bottom:28px; }
-  .sidebar-close { display:inline-grid; width:44px; height:44px; min-width:44px; flex:0 0 44px; padding:0; border-color:#ffffff26; border-radius:50%; }
-  .sidebar-close .ui-icon { width:18px; height:18px; }
+  .sidebar-close { position:relative; display:inline-grid; width:32px; height:32px; min-width:32px; flex:0 0 32px; margin:6px; padding:0; border-color:transparent; border-radius:8px; }
+  .sidebar-close::before { content:""; position:absolute; inset:-6px; border-radius:10px; }
+  .sidebar-close .ui-icon { width:16px; height:16px; }
+  .sidebar-close:focus-visible { outline:2px solid var(--atlas-accent); outline-offset:3px; }
   .sidebar-backdrop { display:block; position:fixed; z-index:70; inset:0; visibility:hidden; opacity:0; pointer-events:none; background:#0005; touch-action:none; transition:opacity .2s ease, visibility 0s linear .2s; }
   .sidebar-backdrop.is-visible { visibility:visible; opacity:1; pointer-events:auto; transition:opacity .2s ease, visibility 0s; }
   html.sidebar-drawer-open .local-map-tip { z-index:85; }

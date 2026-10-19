@@ -1,0 +1,180 @@
+.map-tools-panel {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 6px;
+  width: 220px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 12px;
+  background: var(--atlas-card);
+  color: var(--atlas-foreground);
+  box-shadow: var(--shadow);
+}
+.map-tools-panel button {
+  display: block;
+  width: 100%;
+  padding: 11px 12px;
+  text-align: left;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  font-size: 12px;
+}
+.map-tools-panel button:hover {
+  background: color-mix(in srgb, var(--atlas-accent), transparent 92%);
+}
+#map-tools[hidden] {
+  display: none;
+}
+#map-update-dialog .field {
+  margin-top: 14px;
+}
+#map-update-dialog textarea {
+  font:
+    12px ui-monospace,
+    Consolas,
+    monospace;
+  resize: vertical;
+  max-height: 30vh;
+}
+.update-position-choice {
+  margin-top: 16px;
+  font-size: 12px;
+}
+.version-preview:empty {
+  display: none;
+}
+.version-preview {
+  margin-top: 20px;
+}
+.comparison-counts {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 14px 0;
+  border-block: 1px solid var(--atlas-border);
+  font-size: 11px;
+  color: var(--atlas-muted);
+}
+.comparison-counts strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 23px;
+  font-weight: 500;
+  color: var(--atlas-foreground);
+}
+.comparison-section {
+  margin-top: 12px;
+  font-size: 12px;
+}
+.comparison-section summary {
+  cursor: pointer;
+  color: var(--atlas-foreground);
+}
+.comparison-section ul {
+  padding-left: 20px;
+  max-height: 180px;
+  overflow: auto;
+  color: var(--atlas-muted);
+  line-height: 1.9;
+}
+.comparison-project {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--atlas-muted);
+}
+.checkpoint-create {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 20px 0 12px;
+}
+.checkpoint-create .field {
+  flex: 1;
+  min-width: 0;
+}
+.checkpoint-create button {
+  flex-shrink: 0;
+}
+.checkpoint-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  margin: 18px 0;
+  padding: 0;
+  max-height: 38vh;
+  overflow: auto;
+}
+.checkpoint-item {
+  position: relative;
+  padding: 14px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 11px;
+}
+.checkpoint-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.checkpoint-item:hover {
+  border-color: var(--atlas-muted);
+}
+.checkpoint-item[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--atlas-accent), var(--atlas-border) 45%);
+  background: color-mix(in srgb, var(--atlas-accent), transparent 96%);
+}
+.checkpoint-select:focus-visible {
+  outline: 2px solid var(--atlas-accent);
+  outline-offset: -3px;
+}
+.checkpoint-item > strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.checkpoint-item .settings-copy {
+  font-size: 10px;
+  margin: 6px 0 12px;
+}
+.checkpoint-actions {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.checkpoint-actions .button {
+  pointer-events: auto;
+  font-size: 10px;
+  padding: 6px 10px;
+  min-height: 28px;
+}
+.checkpoint-rename {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  padding: 7px;
+  font-size: 12px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 6px;
+  background: var(--atlas-canvas);
+  color: var(--atlas-foreground);
+}
+#checkpoint-dialog .modal-foot,
+#map-update-dialog .modal-foot {
+  flex-wrap: wrap;
+}
+@media (max-width: 560px) {
+  .checkpoint-create {
+    flex-wrap: wrap;
+  }
+  .checkpoint-create .field {
+    flex-basis: 100%;
+  }
+}
