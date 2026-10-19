@@ -13,4 +13,3 @@ export function resizeGraphCamera(view, viewport) {
     scale: view.transform.scale,
   };
 }
-
