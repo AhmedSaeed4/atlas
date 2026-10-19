@@ -7,6 +7,7 @@ import { initComponentFinder, initExplorationControls } from "./component-finder
 import { LIBRARY_PREFERENCES_KEY, createLibraryPreferences, filterWorkspaceLibrary, editedLabel } from "./workspace-library-view.js";
 import { initWorkspaceGuide } from "./workspace-guide.js";
 import { initMapVersionTools } from "./map-version-tools.js";
+import { bindDialogBackdropClose } from "./dialog-dismissal.js";
 import { sameMapContext, compareGraphVersions } from "./map-update.js";
 import { createGraphGeometryCache, createFrameBatch, updateDraggedGraph } from "./graph-render-cache.js";
 import { SAMPLE_GRAPHS } from "./samples.js";
@@ -2784,25 +2785,10 @@ function stopFitAnimation() {
   if (fitAnimationFrame) cancelAnimationFrame(fitAnimationFrame);
   fitAnimationFrame = 0;
 }
-function fitGraph(animate = true) {
+function moveViewport(target, { animate = true, duration = 240 } = {}) {
   stopFitAnimation();
   const sequence = fitAnimationSequence;
-  const graph = presentationGraph();
-  const layout = graphGeometry.get(graph).layout;
-  const positions = layout.positions;
-  const bounds = graphGeometry.bounds(graph);
-  const rect = byId("graph-stage").getBoundingClientRect();
-  if (!graph.nodes.length || rect.width < 1 || rect.height < 1) {
-    transform = { x: rect.width / 2, y: rect.height / 2, scale: 1 };
-    setViewportTransform();
-    return;
-  }
-  const scale = fitScaleForBounds(bounds, rect);
-  const target = {
-    x: (rect.width - bounds.width * scale) / 2 - bounds.x * scale,
-    y: (rect.height - bounds.height * scale) / 2 - bounds.y * scale,
-    scale,
-  };
+  const graph = currentGraph(), scope = editHistoryScope(), mode = viewMode;
   if (!animate || matchMedia("(prefers-reduced-motion: reduce)").matches) {
     transform = target;
     setViewportTransform();
@@ -2810,10 +2796,14 @@ function fitGraph(animate = true) {
   }
   const start = { ...transform };
   const began = performance.now();
-  const duration = 240;
   const step = (now) => {
     if (sequence !== fitAnimationSequence) return;
-    const progress = clamp((now - began) / duration, 0, 1);
+    if (currentGraph() !== graph || editHistoryScope() !== scope || viewMode !== mode) {
+      stopFitAnimation();
+      return;
+    }
+    const progress = matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? 1 : clamp((now - began) / duration, 0, 1);
     const eased = 1 - Math.pow(1 - progress, 3);
     transform = {
       x: start.x + (target.x - start.x) * eased,
@@ -2825,6 +2815,21 @@ function fitGraph(animate = true) {
     else fitAnimationFrame = 0;
   };
   fitAnimationFrame = requestAnimationFrame(step);
+}
+function fitGraph(animate = true) {
+  const graph = presentationGraph();
+  const bounds = graphGeometry.bounds(graph);
+  const rect = byId("graph-stage").getBoundingClientRect();
+  if (!graph.nodes.length || rect.width < 1 || rect.height < 1) {
+    moveViewport({ x: rect.width / 2, y: rect.height / 2, scale: 1 }, { animate: false });
+    return;
+  }
+  const scale = fitScaleForBounds(bounds, rect);
+  moveViewport({
+    x: (rect.width - bounds.width * scale) / 2 - bounds.x * scale,
+    y: (rect.height - bounds.height * scale) / 2 - bounds.y * scale,
+    scale,
+  }, { animate });
 }
 function zoomAt(nextScale, clientX, clientY) {
   stopFitAnimation();
@@ -3440,6 +3445,7 @@ function updateViewMode() {
   byId("show-timeline").setAttribute("aria-pressed", String(timeline));
 }
 function setViewMode(mode) {
+  stopFitAnimation();
   viewMode = mode === "timeline" ? "timeline" : "graph";
   updateViewMode();
   renderGraph();
@@ -3772,25 +3778,6 @@ function autoLayout() {
   renderInspector();
   fitGraph(true);
   persist();
-}
-function bindDialogBackdropClose(dialog, close = () => dialog.close("cancel")) {
-  let backdropPress = false;
-  const isBackdrop = (event) => {
-    const rect = dialog.getBoundingClientRect();
-    return event.target === dialog
-      && (event.clientX < rect.left || event.clientX > rect.right
-        || event.clientY < rect.top || event.clientY > rect.bottom);
-  };
-  dialog.addEventListener("pointerdown", (event) => {
-    backdropPress = event.button === 0 && isBackdrop(event);
-  });
-  dialog.addEventListener("pointercancel", () => { backdropPress = false; });
-  dialog.addEventListener("click", (event) => {
-    const dismiss = backdropPress && isBackdrop(event);
-    backdropPress = false;
-    if (dismiss) close();
-  });
-  dialog.addEventListener("close", () => { backdropPress = false; });
 }
 function openProjectEditor() {
   if (!requireMutation("edit project details")) return;
@@ -5203,9 +5190,12 @@ function attachEvents() {
   byId("map-settings-dialog").querySelectorAll("[data-map-settings-close]").forEach((button) => {
     button.addEventListener("click", closeMapSettings);
   });
-  bindDialogBackdropClose(byId("map-settings-dialog"), closeMapSettings);
-  bindDialogBackdropClose(byId("project-modal"));
-  bindDialogBackdropClose(byId("editor-modal"));
+  for (const dialog of document.querySelectorAll("dialog.modal")) {
+    // Account/Settings use the same helper in their shared controller so the
+    // landing page gets identical dismissal and aria-expanded cleanup.
+    if (["account-modal", "settings-modal"].includes(dialog.id)) continue;
+    bindDialogBackdropClose(dialog, dialog.id === "map-settings-dialog" ? closeMapSettings : undefined);
+  }
   byId("map-settings-dialog").addEventListener("close", () => {
     clearMapSettingsProgress();
     mapSettingsReadCancel?.();
@@ -5637,12 +5627,11 @@ function focusComponent(id) {
       )
     : rect.width;
   const scale = Math.max(transform.scale, 0.85);
-  transform = {
+  moveViewport({
     x: available / 2 - (point.x + size.width / 2) * scale,
     y: rect.height / 2 - (point.y + size.height / 2) * scale,
     scale,
-  };
-  setViewportTransform();
+  }, { duration: 420 });
   focusGraphTarget({ nodeId: id, fallbackGraph: true });
 }
 function initExploration() {

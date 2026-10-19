@@ -42,6 +42,26 @@ export function initBackupTools({
     byId("backup-error").hidden = !message;
   };
   const canManage = () => getState().canManageLocal;
+  const menu = byId("local-backups-panel"),
+    menuButton = byId("backup-menu-button");
+  const closeMenu = () => {
+    try {
+      menu.hidePopover();
+    } catch {}
+  };
+  menu.addEventListener("beforetoggle", (event) => {
+    if (event.newState !== "open") return;
+    if (!canManage()) {
+      event.preventDefault();
+      return;
+    }
+    const rect = menuButton.getBoundingClientRect();
+    menu.style.left =
+      Math.max(12, Math.min(rect.right + 12, innerWidth - 332)) + "px";
+  });
+  for (const id of ["backup-library", "restore-library"])
+    byId(id).addEventListener("click", closeMenu);
+  window.addEventListener("resize", closeMenu, { passive: true });
   function showDraftState(message = "") {
     const visible = Boolean(canManage() && draft);
     byId("recover-local-draft").hidden = !visible;
@@ -268,6 +288,7 @@ export function initBackupTools({
     update() {
       const state = getState();
       byId("local-backup-actions").hidden = !state.canManageLocal;
+      if (!state.canManageLocal) closeMenu();
       byId("backup-library").disabled = !state.projects.length;
       showDraftState();
       void loadDraft();

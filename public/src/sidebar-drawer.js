@@ -43,7 +43,11 @@ export function createSidebarDrawer({ sidebar, main, trigger, backdrop, closeBut
   }, 0), true);
   doc.addEventListener("keydown", event => {
     if (!opened || event.defaultPrevented || doc.querySelector("dialog[open]")) return;
-    if (event.key === "Escape") { event.preventDefault(); setOpen(false, { restoreFocus: true }); }
+    if (event.key === "Escape") {
+      // Dismiss the topmost native popover before closing its parent drawer.
+      if (doc.querySelector("[popover]:popover-open")) return;
+      event.preventDefault(); setOpen(false, { restoreFocus: true });
+    }
     else if (event.key === "Tab") {
       const items = [...sidebar.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]')]
         .filter(item => item.tabIndex >= 0 && item.getClientRects().length && !item.closest("[hidden], [inert]"));

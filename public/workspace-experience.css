@@ -1,20 +1,107 @@
 /* Workspace review features use the existing Atlas palette and modal geometry. */
 .local-backup-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 12px;
-  margin: 6px 0;
+  display: block;
 }
 .local-backup-actions[hidden] {
   display: none;
 }
-.local-backup-actions .sidebar-link {
-  width: auto;
-  flex: 0 0 auto;
-  font-size: 11px;
+#backup-menu-button {
+  justify-content: space-between;
+}
+#backup-menu-button .ui-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--atlas-muted);
+}
+.local-backup-actions .recovery-action {
+  color: var(--atlas-accent);
+}
+.local-backups-panel {
+  position: fixed;
+  inset: auto;
+  bottom: 12px;
   margin: 0;
-  padding: 5px 0;
-  white-space: nowrap;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--atlas-border);
+  border-radius: 16px;
+  background: var(--atlas-card);
+  color: var(--atlas-foreground);
+  box-shadow: var(--shadow);
+}
+.backups-menu-heading {
+  padding: 8px 10px 13px;
+}
+.backups-menu-heading .eyebrow {
+  font-size: 8px;
+  color: var(--atlas-muted);
+}
+.backups-menu-heading h2 {
+  margin: 6px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.backups-menu-heading p {
+  margin: 0;
+  color: var(--atlas-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.backup-menu-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 12px 10px;
+  text-align: left;
+  background: transparent;
+  color: var(--atlas-foreground);
+}
+.backup-menu-action:hover,
+.backup-menu-action:focus-visible {
+  background: color-mix(in srgb, var(--atlas-foreground), transparent 94%);
+}
+.backup-menu-action:disabled {
+  opacity: 0.45;
+}
+.backup-menu-action .ui-icon {
+  flex: 0 0 17px;
+  margin-top: 2px;
+  color: var(--atlas-muted);
+}
+.backup-menu-action strong,
+.backup-menu-action small {
+  display: block;
+}
+.backup-menu-action strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.backup-menu-action small {
+  margin-top: 5px;
+  color: var(--atlas-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.local-backups-panel .workspace-guidance {
+  margin: 8px 10px 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--atlas-border);
+}
+.local-backups-panel .workspace-guidance summary {
+  font-size: 10px;
+  color: var(--atlas-muted);
+}
+.local-backups-panel .workspace-guidance summary:hover {
+  color: var(--atlas-foreground);
+}
+.local-backups-panel .workspace-guidance .field-hint {
+  line-height: 1.7;
+  color: var(--atlas-muted);
 }
 .local-draft-note {
   font-size: 10px;

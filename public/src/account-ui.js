@@ -1,4 +1,5 @@
 import { startButtonProgress } from "./action-feedback.js";
+import { bindDialogBackdropClose } from "./dialog-dismissal.js";
 const byId = (root, id) => root?.getElementById?.(id) || root?.querySelector?.(`#${id}`) || null;
 
 export function getAccountPresentation(state = {}) {
@@ -67,9 +68,7 @@ function bindDialogDismissal({ dialog, closeButtons, triggers }) {
   for (const button of closeButtons) {
     button.addEventListener("click", () => dialogClose(dialog, triggers));
   }
-  dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) dialogClose(dialog, triggers);
-  });
+  bindDialogBackdropClose(dialog, () => dialogClose(dialog, triggers));
   dialog.addEventListener("close", () => {
     for (const trigger of triggers) trigger.setAttribute("aria-expanded", "false");
   });

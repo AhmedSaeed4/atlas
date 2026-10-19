@@ -4,7 +4,7 @@ Atlas still opens software architecture maps from an external coding agent, with
 
 ## Find and explore a map
 
-- **Find a component** or Ctrl/Command+K searches labels, component types, paths and evidence text. Use Up/Down and Enter, or click a result, to reveal and center it. Escape dismisses results. Opening a match can reveal its hidden type or expand its group.
+- **Find a component** or Ctrl/Command+K searches labels, component types, paths and evidence text. Use Up/Down and Enter, or click a result, to reveal and smoothly center it over about 0.4 seconds. Pan, zoom, dragging, another result or switching views interrupts the move; reduced motion centers immediately. Escape dismisses results. Opening a match can reveal its hidden type or expand its group. The final position/zoom stays the same as immediate focusing.
 - **Explore** chooses downstream, upstream, immediate neighbours or all components for the selected component. Downstream remains the default. These are view-only highlights.
 - Expand **Groups** inside Explore to fold a named group into a summary. Counts include only visible members. Summary connections aggregate actual connections; internal connections appear as counts. Click a summary or uncheck its group to expand. Map and Timeline use the same projection. Export always uses the full original map.
 - At compact laptop/tablet widths, the Inspector overlays the graph. Its circular details control sits beside Map/Timeline. Selecting a component opens details; an empty-canvas click or Close dismisses it. At large widths it retains the normal docked layout. Full screen retains its existing separate exit control and Escape behavior.
@@ -22,8 +22,8 @@ Each tab remembers its own current local or owned cloud workspace. Hints contain
 
 ## Back up and recover local maps
 
-1. Choose **Back up maps** to download the local library, including all local graphs. Keep the JSON outside the browser if it matters.
-2. Choose **Restore backup**, then select/paste a version1 library backup or ordinary single-map JSON.
+1. Open **Backups** in the sidebar, then **Back up maps** to download the local library, including all local graphs. Keep the JSON outside the browser if it matters. Cloud workspaces are not included.
+2. Choose **Backups → Restore backup**, then select/paste a version1 library backup or ordinary single-map JSON.
 3. Review the count and names. Apply explicitly to create fresh local copies; existing maps remain. Duplicate names get a restored suffix. This flow never uploads or links restored maps to a cloud account, even when future automatic saving is enabled.
 
 Restore accepts up to 100 maps and a 16 MiB library input; every normalized map must also satisfy the ordinary 2 MiB, 800 component and 2,400 connection limits. All records are validated before changes are applied. If saved bytes are unreadable, the original bytes must be downloaded and explicit replacement consent given before recovery can replace that broken library.
@@ -50,6 +50,12 @@ Open **Map tools → Checkpoints** on an editable local map or verified owned cl
 Checkpoints survive reload in this browser and origin, with at most eight checkpoints and a 12 MiB total budget per map. A full budget rejects a new checkpoint; existing named versions are never automatically evicted. They are device copies, not cloud revision history, and do not synchronize across devices. Another account or a shared viewer cannot access an owner's checkpoint tools.
 
 Successful deletion of a map from this browser also removes that map's device checkpoints. **Clear local data** removes local maps and their named checkpoints; separate cloud maps and unsaved recovery drafts are retained. If the browser blocks cleanup, a warning reports the limitation. Cloud deletion from another device may leave inaccessible device records. Export important checkpoints before deletion, moving devices or clearing site data. Restored/imported copies have fresh map IDs and do not inherit the original map's checkpoints.
+
+## Dismissing dialogs
+
+Click the dimmed area outside a workspace dialog to cancel it, just as with Escape or its Close/Cancel button. This includes Quick guide, import/share/prompt, editors, confirmations, map versions and backup restore; Account/Settings use the same behavior on both pages. Outside dismissal never presses Save, Apply or a confirmation action. A drag beginning inside a dialog and ending outside does not dismiss it. An in-progress backup restore keeps its existing cancellation guard until the operation finishes. Unsaved form inputs are discarded exactly as with Cancel.
+
+The single **Backups** sidebar entry opens a small menu with separately described download/restore actions. Click outside or press Escape to dismiss the menu. Optional backup/sharing help lives inside it. An available **Recover unsaved maps** action and its notice remain visible directly in the sidebar.
 
 ## Reproducible checks
 

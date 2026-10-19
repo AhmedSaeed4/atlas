@@ -30,6 +30,7 @@ const backup = () => ({
 });
 async function seed(page) {
   await page.goto("/workspace");
+  await page.getByRole("button", { name: "Backups", exact: true }).click();
   await page
     .getByRole("button", { name: "Restore backup", exact: true })
     .click();
@@ -66,6 +67,7 @@ test("backup preview is non-destructive and malformed data preserves existing ma
   page,
 }) => {
   await seed(page);
+  await page.getByRole("button", { name: "Backups", exact: true }).click();
   await page
     .getByRole("button", { name: "Restore backup", exact: true })
     .click();
@@ -356,4 +358,217 @@ test("phone controls and named dialogs remain usable in both themes", async ({
   }
   await page.screenshot({ path: test.info().outputPath("phone-dark.png") });
   expect(errors).toEqual([]);
+});
+
+test("finder camera moves through intermediate frames and a user zoom interrupts it", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.clock.install({ time: new Date("2026-01-01T09:00:00Z") });
+  await seed(page);
+  await page.clock.pauseAt(new Date("2026-01-01T10:00:00Z"));
+  const viewport = page.locator("#viewport");
+  const search = page.getByRole("combobox", {
+    name: "Find a component",
+    exact: true,
+  });
+  const before = await viewport.getAttribute("transform");
+  await search.fill("Data store");
+  await search.press("Enter");
+  expect(await viewport.getAttribute("transform")).toBe(before);
+  await page.clock.runFor(80);
+  const intermediate = await viewport.getAttribute("transform");
+  expect(intermediate).not.toBe(before);
+  await page.clock.runFor(500);
+  const finished = await viewport.getAttribute("transform");
+  expect(finished).not.toBe(intermediate);
+  await page.clock.runFor(500);
+  expect(await viewport.getAttribute("transform")).toBe(finished);
+
+  await search.fill("Web client");
+  await search.press("Enter");
+  await page.clock.runFor(60);
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  const interrupted = await viewport.getAttribute("transform");
+  await page.clock.runFor(700);
+  expect(await viewport.getAttribute("transform")).toBe(interrupted);
+
+  await search.fill("API service");
+  await search.press("Enter");
+  await page.clock.runFor(60);
+  await search.fill("Data store");
+  await search.press("Enter");
+  await page.clock.runFor(500);
+  const latest = await viewport.getAttribute("transform");
+  await expect(page.locator("#inspector-content .detail-title")).toHaveText(
+    "Data store",
+  );
+  await page.clock.runFor(500);
+  expect(await viewport.getAttribute("transform")).toBe(latest);
+  await page.screenshot({ path: test.info().outputPath("finder-focus.png") });
+});
+
+test("finder camera respects reduced motion and cancels hidden-map movement", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-01-01T09:00:00Z") });
+  await seed(page);
+  await page.clock.pauseAt(new Date("2026-01-01T10:00:00Z"));
+  const viewport = page.locator("#viewport");
+  const search = page.getByRole("combobox", {
+    name: "Find a component",
+    exact: true,
+  });
+  const before = await viewport.getAttribute("transform");
+  await search.fill("API service");
+  await search.press("Enter");
+  const instant = await viewport.getAttribute("transform");
+  expect(instant).not.toBe(before);
+  await page.clock.runFor(500);
+  expect(await viewport.getAttribute("transform")).toBe(instant);
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await search.fill("Data store");
+  await search.press("Enter");
+  await page.clock.runFor(60);
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  const hidden = await viewport.getAttribute("transform");
+  await page.clock.runFor(700);
+  expect(await viewport.getAttribute("transform")).toBe(hidden);
+});
+
+test("workspace dialogs dismiss on outside click without saving or treating a drag as dismissal", async ({
+  page,
+}) => {
+  await seed(page);
+  const outside = () => page.mouse.click(8, 8);
+  await page.getByRole("button", { name: "Quick guide", exact: true }).click();
+  await expect(page.locator("#quick-guide")).toBeVisible();
+  await page.locator("#quick-guide").click({ position: { x: 12, y: 12 } });
+  await expect(page.locator("#quick-guide")).toBeVisible();
+  await outside();
+  await expect(page.locator("#quick-guide")).toBeHidden();
+
+  await page
+    .getByRole("button", { name: "API service, Service", exact: true })
+    .press("F2");
+  const editor = page.getByRole("dialog", {
+    name: "Edit component",
+    exact: true,
+  });
+  const input = editor.getByLabel("Description", { exact: true });
+  await input.fill("This canceled text must not be saved");
+  const box = await input.boundingBox();
+  await page.mouse.move(box.x + 20, box.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(8, 8);
+  await page.mouse.up();
+  await expect(editor).toBeVisible();
+  await outside();
+  await expect(editor).toBeHidden();
+  await page
+    .getByRole("button", { name: "API service, Service", exact: true })
+    .press("F2");
+  await expect(input).toHaveValue("");
+  await outside();
+
+  for (const [button, selector] of [
+    ["Edit project", "#project-modal"],
+    ["Add node", "#editor-modal"],
+    ["Add connection", "#edge-modal"],
+    ["Import architecture Ctrl+I", "#import-modal"],
+    ["Share", "#share-modal"],
+    ["Settings", "#settings-modal"],
+    ["Clear local data", "#confirm-modal"],
+  ]) {
+    await page.getByRole("button", { name: button, exact: true }).click();
+    await expect(page.locator(selector)).toBeVisible();
+    await outside();
+    await expect(page.locator(selector)).toBeHidden();
+  }
+  for (const [name, selector] of [
+    ["Update current map…", "#map-update-dialog"],
+    ["Checkpoints…", "#checkpoint-dialog"],
+  ]) {
+    await tools(page, name);
+    await expect(page.locator(selector)).toBeVisible();
+    await outside();
+    await expect(page.locator(selector)).toBeHidden();
+  }
+  await page.getByRole("button", { name: "Backups", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Restore backup", exact: true })
+    .click();
+  await expect(page.locator("#backup-dialog")).toBeVisible();
+  await outside();
+  await expect(page.locator("#backup-dialog")).toBeHidden();
+  await expect(page.locator("#project-list .project-row")).toHaveCount(2);
+  await expect(page.locator("#save-status")).toHaveText("Saved locally");
+});
+
+test("Backups is one sidebar entry with a keyboard-accessible local menu on desktop and phone", async ({
+  page,
+}) => {
+  await seed(page);
+  const toggle = page.getByRole("button", { name: "Backups", exact: true });
+  const menu = page.locator("#local-backups-panel");
+  await expect(
+    page.getByRole("button", { name: "Back up maps", exact: true }),
+  ).toBeHidden();
+  await toggle.press("Enter");
+  await expect(menu).toBeVisible();
+  await expect(menu).toContainText("Cloud workspaces are separate");
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Back up maps", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(toggle).toBeFocused();
+  await toggle.click();
+  await page.screenshot({
+    path: test.info().outputPath("backups-menu-dark.png"),
+  });
+  await page.mouse.click(8, 8);
+  await expect(menu).toBeHidden();
+
+  await page
+    .getByRole("button", { name: "Switch to light theme", exact: true })
+    .click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page
+    .getByRole("button", { name: "Open projects", exact: true })
+    .click();
+  await toggle.click();
+  await expect(menu).toBeVisible();
+  const bounds = await menu.boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Back up maps", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Restore backup", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Close projects", exact: true }),
+  ).toBeVisible();
+  await toggle.click();
+  await page.screenshot({
+    path: test.info().outputPath("backups-menu-phone-light.png"),
+  });
+  await page
+    .getByRole("button", { name: "Restore backup", exact: true })
+    .click();
+  await expect(menu).toBeHidden();
+  await expect(
+    page.getByRole("dialog", { name: "Restore a backup", exact: true }),
+  ).toBeVisible();
+  await page.mouse.click(8, 8);
+  await expect(page.locator("#backup-dialog")).toBeHidden();
 });
