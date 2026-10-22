@@ -29,6 +29,12 @@ test("layers an acyclic flow left to right", () => {
   assert.equal(layout.positions.get("n3").x, layout.positions.get("n0").x);
 });
 
+test('normal maps retain the original column spacing after a small junction node', () => {
+  const graph = { nodes: [{ id: 'junction', label: 'Branch', type: 'Module', junction: true }, { id: 'service', label: 'Service', type: 'Service' }], edges: [{ source: 'junction', target: 'service' }] };
+  const layout = layoutGraph(graph);
+  assert.equal(layout.positions.get('service').x - layout.positions.get('junction').x, NODE_WIDTH + 118);
+});
+
 test("condenses a large cycle into one bounded layer", () => {
   const count = 800;
   const graph = {

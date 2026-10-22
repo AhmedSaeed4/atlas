@@ -1,0 +1,16 @@
+/* Quiet boundaries give the architecture a readable hierarchy without
+   competing with node selection or the moving connection paths. */
+.map-category { pointer-events: none; }
+.category-boundary { fill: var(--atlas-card); fill-opacity: .28; stroke: var(--atlas-border); stroke-width: 1; }
+.category-header { pointer-events: none; }
+.category-header-hit { fill: var(--atlas-graph-canvas); fill-opacity: .96; stroke: transparent; }
+.category-dot { fill: var(--atlas-accent); }
+.category-name { fill: var(--atlas-foreground); font-family: system-ui, sans-serif; font-size: 12px; font-weight: 650; }
+.category-count { fill: var(--atlas-muted); font: 10px ui-monospace, monospace; }
+.category-field .field-hint { margin: 0; font-size: 10px; line-height: 1.6; color: var(--atlas-muted); }
+
+.category-frames-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.category-frames-toggle[hidden] { display: none; }
+.category-frames-toggle[aria-pressed="true"] { border-color: var(--atlas-accent); color: var(--atlas-foreground); background: var(--atlas-card); }
+.category-frame-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--atlas-border); border-radius: 10px; color: var(--atlas-foreground); font-size: 11px; }
+.category-frame-summary-count { color: var(--atlas-muted); font: 10px ui-monospace, monospace; }

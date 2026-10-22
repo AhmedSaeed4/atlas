@@ -52,6 +52,7 @@ export function buildAgentPrompt(baseUrl, localHost) {
     "Rules:",
     "- Project name is required and limited to 120 characters; description is optional and limited to 500; type is optional and limited to 60.",
     "- Map the real system from its entry points through important UI, services, APIs, data stores, queues, jobs, files, modules, and external integrations. Include backend and desktop process boundaries when they exist.",
+    "- Use the optional node.group field to place related components in a named category boundary (for example Interface, Processing, or Storage). Use consistent names grounded in the project structure; leave unrelated or uncertain components ungrouped.",
     "- Use concise labels and descriptions. Node label is limited to 120 characters, type to 60, description to 1,000, source to 240, and group to 100. Edge label is limited to 100 and type to 60. Make every node ID unique and every edge endpoint match a node ID. Keep the map useful rather than listing every source file.",
     "- The chart field is optional. Include it only when repository evidence supports the measured quantity and a useful comparison/order. The label must say what is measured; evidence must name the exact source path/setting or transparent structural calculation. Omit charts without supported values or meaningful categories/order.",
     "- Independent categories (for example, tests by suite) must use kind bar and one clear category label per value. Counts are not pass rates, coverage, or proof of quality.",

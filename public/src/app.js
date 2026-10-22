@@ -12,6 +12,7 @@ import { resizeGraphCamera } from "./graph-camera.js";
 import { appendMapSettingsAction } from "./map-settings-actions.js";
 import { sameMapContext, compareGraphVersions } from "./map-update.js";
 import { createGraphGeometryCache, createFrameBatch, updateDraggedGraph } from "./graph-render-cache.js";
+import { renderCategoryContainers, scaleCategoryHeaders, createCategoryFramePreferences } from './map-categories.js';
 import { SAMPLE_GRAPHS } from "./samples.js";
 import { createProjectId, LIBRARY_STORAGE_KEY } from "./storage.js";
 import { createLocalLibrary, reconcileLocalLibrary } from "./local-library.js";
@@ -68,6 +69,7 @@ let touchInteractionActive = false;
 let touchSelectedEdge = null;
 let searchTerm = "";
 let traceMode='downstream', collapsedGroups=new Set(), explorationScope='', projectionMemo=null;
+let categoryFramesEnabled = false;
 let componentFinder=null, explorationControls=null, mountedTimelineGraph=null;
 let editingNodeId = null;
 let editingEdgeId = null;
@@ -105,13 +107,14 @@ const droppedFileGate = createRevisionGate();
 let fitAnimationFrame = 0;
 let fitAnimationSequence = 0;
 let animateStructure = true;
-const graphGeometry = createGraphGeometryCache();
+const graphGeometry = createGraphGeometryCache({ categoryFrames: () => categoryFramesEnabled });
 let mountedGraph = null, mountedCards = new Map(), mountedEdges = new Map();
 const dragPaint = createFrameBatch(({graph,projectId,nodeId,position}) => {
   const project=projectById(projectId);
   const projected=presentationGraph();
   if(!dragState || dragState.kind!=='node' || dragState.id!==nodeId || activeProject()!==project || project?.graph!==graph || mountedGraph!==projected)return;
   updateDraggedGraph({graph:projected,nodeId,position,cache:graphGeometry,cards:mountedCards,edges:mountedEdges});
+  renderMapCategories(projected, graphGeometry.get(projected).layout);
 });
 let lastStorageError = "";
 let backupTools = null;
@@ -124,6 +127,7 @@ let transform = { x: 0, y: 0, scale: 1 };
 let viewMode = "graph";
 const CLOUD_ASSOCIATIONS_KEY = "atlas.online.associations.v1";
 const onlineStorage = (() => { try { return window.localStorage; } catch { return null; } })();
+const categoryFramePreferences = createCategoryFramePreferences(onlineStorage);
 const workspaceNavigation = createWorkspaceNavigation({
   storage: onlineStorage,
   tabStorage: (() => { try { return window.sessionStorage; } catch { return null; } })(),
@@ -2771,6 +2775,7 @@ function refreshGraphPresentation() {
 }
 function refreshTraceStyles() {
   const graph = presentationGraph();
+  renderMapCategories(graph, graphGeometry.get(graph).layout);
   const trace = traceRoutes(graph, selectedNodeId, traceMode);
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const matches = new Set(graph.nodes.filter((node) => !searchTerm || nodeMatchesQuery(node,searchTerm)).map((node) => node.id));
@@ -2802,6 +2807,7 @@ function refreshTraceStyles() {
   }
 }
 function setViewportTransform() {
+  scaleCategoryHeaders(byId('categories-layer'), transform.scale);
   byId("viewport").setAttribute("transform", "translate(" + transform.x + " " + transform.y + ") scale(" + transform.scale + ")");
   const percent = transform.scale * 100;
   byId("zoom-label").textContent = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
@@ -2888,7 +2894,28 @@ function updateGraphEmptyState() {
   byId("node-count").textContent = isOnlineSession() && onlineState.status === "loading" && !hasProject ? "Opening map…" : graph.nodes.length + (graph.nodes.length === 1 ? " component" : " components");
   byId("graph-count-label").textContent = graph.nodes.length + " nodes / " + graph.edges.length + " edges";
 }
+function renderMapCategories(graph, layout) {
+  if (!categoryFramesEnabled) { byId('categories-layer').replaceChildren(); byId('category-headers-layer').replaceChildren(); return; }
+  renderCategoryContainers(byId('categories-layer'), graph, layout, { excludedTypes, headerLayer: byId('category-headers-layer') });
+}
+function updateCategoryViewControls() {
+  byId('category-frames-toggle').hidden = viewMode !== 'graph';
+  byId('category-frames-toggle').disabled = !activeProject();
+  byId('category-frames-toggle').setAttribute('aria-pressed', String(categoryFramesEnabled));
+}
+function toggleCategoryFrames() {
+  cancelActiveGesture();
+  categoryFramesEnabled = !categoryFramesEnabled;
+  categoryFramePreferences.set(editHistoryScope(), categoryFramesEnabled);
+  collapsedGroups.clear();
+  projectionMemo = null;
+  animateStructure = false;
+  renderGraph(); renderInspector(); explorationControls?.update();
+  fitGraph(true);
+  if (categoryFramesEnabled && !currentGraph().nodes.some(node => node.group)) showToast('Add a Category in the component editor to create a frame.');
+}
 function renderGraph() {
+  updateCategoryViewControls();
   if (viewMode === 'timeline') {
     try { byId('graph').pauseAnimations(); } catch {}
     animateStructure=false;
@@ -2907,6 +2934,7 @@ function renderGraph() {
   const dimensions = layout.dimensions;
   const edgeLayer = byId("edges-layer");
   const nodeLayer = byId("nodes-layer");
+  renderMapCategories(graph, layout);
   edgeLayer.replaceChildren();
   nodeLayer.replaceChildren();
   const nodeCards = new Map();
@@ -2957,7 +2985,7 @@ function renderGraph() {
       outputPort.addEventListener("pointerdown", (event) => startPortDrag(event, node.id));
       inputPort.addEventListener("pointerenter", () => { if (dragState?.kind === "connection") updatePortPreview(dragState.lastEvent); });
       group.append(inputPort, outputPort);
-      cardText(group, node.type.toUpperCase(), 14, 21, "card-type", 24);
+      cardText(group, node.viewGroup ? 'CATEGORY' : node.type.toUpperCase(), 14, 21, "card-type", 24);
       group.append(svgElement("circle", { class: "card-icon-bg", cx: size.width - 16, cy: 15, r: 7 }));
       group.append(svgElement("path", { class: "card-icon-glyph", d: "M 186 12.5 L 190 15 L 186 17.5 M 186.5 12.5 L 184.5 12.5 M 186.5 17.5 L 184.5 17.5" }));
       group.append(svgElement("circle", { class: "card-icon-node", cx: 184, cy: 12.5, r: 1.2 }));
@@ -3087,6 +3115,7 @@ function renderGraph() {
     const fullLabel = geometry.fullLabel || geometry.label;
     const hasLabel = Boolean(String(edge.label || edge.type || "").trim());
     const group = svgElement("g", { class: "edge-group", "data-edge-index": index, "data-edge-id": edge.id, "data-source-type": sourceNode?.type || "component", tabindex: 0, role: "button", "aria-pressed": String(selectedEdgeId === edge.id), "aria-label": (sourceNode?.label || edge.source) + " to " + (targetNode?.label || edge.target) + (hasLabel ? ": " + fullLabel : ", unlabeled connection") });
+    if (sourceNode?.viewGroup || targetNode?.viewGroup) group.classList.add('category-link');
     if (selectedEdgeId === edge.id) group.classList.add("selected");
     if (!visible.has(edge.source) || !visible.has(edge.target)) group.classList.add("filtered");
     if (selectedNodeId && traceMode!=="all" && !trace.edges.has(index)) group.classList.add("dimmed");
@@ -3325,7 +3354,7 @@ function renderInspector() {
   }
   if (node.group) {
     const section = plain("section", "detail-section");
-    section.append(plain("h3", "", "Subsystem"));
+    section.append(plain("h3", "", "Category"));
     section.append(plain("p", "detail-description", node.group));
     body.append(section);
   }
@@ -4074,6 +4103,14 @@ function openNodeEditor(nodeId = null, { position = null, projectId = null, retu
   byId("node-chart-evidence").value = chart?.evidence || "";
   byId("node-description").value = node?.description || "";
   byId("node-source").value = node?.source || "";
+  byId('node-group').value = node?.group || '';
+  const categoryChoices = byId('node-group-options');
+  categoryChoices.replaceChildren();
+  for (const name of [...new Set(project.graph.nodes.map(item => item.group).filter(Boolean))].sort((a, b) => a.localeCompare(b))) {
+    const option = document.createElement('option');
+    option.value = name;
+    categoryChoices.append(option);
+  }
   byId("node-purpose").value = node?.details?.purpose || "";
   byId("node-operation").value = node?.details?.operation || "";
   byId("node-inputs").value = (node?.details?.inputs || []).join("\n");
@@ -4141,7 +4178,7 @@ function saveNode() {
     label, type,
     description: byId("node-description").value.trim(),
     source: byId("node-source").value.trim(),
-    group: existing?.group || "",
+    group: byId('node-group').value.trim(),
   };
   if (hasDetails) node.details = detailFields;
   else delete node.details;
@@ -4187,7 +4224,7 @@ function saveNode() {
   nodeEditContext = null;
   animateStructure = !existing;
   renderAll();
-  if (!existing) fitGraph(true);
+  if (!existing || node.group !== existing.group) fitGraph(true);
   persist();
 }
 function setDialogFocusTarget(dialogId, target) {
@@ -4823,10 +4860,11 @@ async function exportCurrent(kind) {
   const name = safeFilename(graph.project.name);
   if (kind === "json") { exportJson(graph); showToast("Downloaded a JSON backup."); return; }
   const activeTheme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-  if (kind === "svg") { downloadText(buildSvg(graph, activeTheme), name + ".svg", "image/svg+xml;charset=utf-8"); showToast("Downloaded a standalone SVG."); return; }
+  const exportCategoryFrames = categoryFramesEnabled;
+  if (kind === "svg") { downloadText(buildSvg(graph, activeTheme, { categoryFrames: exportCategoryFrames }), name + ".svg", "image/svg+xml;charset=utf-8"); showToast("Downloaded a standalone SVG."); return; }
   if (kind === "png" || kind === "copy-image") {
     try {
-      const blob = await svgToPngBlob(buildSvg(graph, activeTheme));
+      const blob = await svgToPngBlob(buildSvg(graph, activeTheme, { categoryFrames: exportCategoryFrames }));
       if (!isCurrent()) { showToast("Export stopped because the map changed or became unavailable.", "error"); return; }
       if (kind === "png") {
         downloadBlob(blob, name + ".png");
@@ -4839,7 +4877,7 @@ async function exportCurrent(kind) {
       if (!isCurrent()) return;
       if (kind === "copy-image") {
         try {
-          const blob = await svgToPngBlob(buildSvg(graph, activeTheme));
+          const blob = await svgToPngBlob(buildSvg(graph, activeTheme, { categoryFrames: exportCategoryFrames }));
           if (!isCurrent()) return;
           downloadBlob(blob, name + ".png");
           showToast("Image clipboard access is unavailable, so the PNG was downloaded instead.");
@@ -5299,6 +5337,7 @@ function attachEvents() {
   byId("undo-edit").addEventListener("click", () => performEditHistory("undo"));
   byId("redo-edit").addEventListener("click", () => performEditHistory("redo"));
   byId("auto-layout").addEventListener("click", autoLayout);
+  byId('category-frames-toggle').addEventListener('click', toggleCategoryFrames);
   byId("fit-graph").addEventListener("click", () => fitGraph(true));
   byId("zoom-in").addEventListener("click", () => {
     const rect = byId("graph-stage").getBoundingClientRect();
@@ -5559,13 +5598,14 @@ function syncExplorationScope() {
   if (scope === explorationScope) return;
   explorationScope = scope;
   collapsedGroups = new Set();
-  traceMode = "downstream";
+  categoryFramesEnabled = categoryFramePreferences.enabled(scope);
+  traceMode = 'downstream';
   projectionMemo = null;
   componentFinder?.close();
 }
 function presentationGraph() {
   const graph = currentGraph();
-  if (!collapsedGroups.size) return graph;
+  if (categoryFramesEnabled || !collapsedGroups.size) return graph;
   const key = JSON.stringify([
     [...collapsedGroups].sort(),
     [...excludedTypes].sort(),
@@ -5579,6 +5619,7 @@ function presentationGraph() {
   return projected;
 }
 function toggleGroup(name) {
+  if (categoryFramesEnabled) return;
   if (collapsedGroups.has(name)) collapsedGroups.delete(name);
   else {
     collapsedGroups.add(name);
@@ -5676,6 +5717,7 @@ function initExploration() {
       selectedId: selectedNodeId,
       mode: traceMode,
       collapsed: collapsedGroups,
+      categoryFrames: categoryFramesEnabled,
     }),
     onMode(mode) {
       traceMode = mode;
@@ -5686,7 +5728,7 @@ function initExploration() {
     onReset() {
       collapsedGroups.clear();
       projectionMemo = null;
-      traceMode = "downstream";
+      traceMode = 'downstream';
       excludedTypes.clear();
       focusedType = "";
       lockedType = "";

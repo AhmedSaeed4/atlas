@@ -2,6 +2,8 @@ import { layoutGraph, NODE_WIDTH, NODE_HEIGHT, nodeDimensions } from "./layout.j
 import { edgeGeometry, edgeRoutingLanes, graphBounds } from "./geometry.js";
 import { chartCompactReadout, chartDescription, chartGeometry, chartPresentation, chartValueLabel } from "./charts.js";
 import { serializeGraphJson } from "./schema.js";
+import { categoryBounds, categoryTitle } from './map-categories.js';
+import { createCategoryRouting } from './category-routing.js';
 
 function xmlSafeText(value) {
   let safe = "";
@@ -72,18 +74,31 @@ function nodeDetailsDescription(node) {
   return parts.filter(Boolean).join(". ") || node.type || "Architecture component";
 }
 
-export function buildSvg(graph, theme = "dark") {
+export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {}) {
   const palette = PALETTES[theme] || PALETTES.dark;
-  const { positions, dimensions } = layoutGraph(graph);
-  const bounds = graphBounds(graph, positions, dimensions);
+  const { positions, dimensions } = layoutGraph(graph, { categoryFrames });
+  const routing = categoryFrames ? createCategoryRouting(graph, positions, dimensions) : null;
+  const bounds = graphBounds(graph, positions, dimensions, routing, { categoryFrames });
   const padding = 30;
   const width = Math.max(320, Math.ceil(bounds.width + padding * 2));
   const height = Math.max(220, Math.ceil(bounds.height + padding * 2));
   const offsetX = padding - bounds.x;
   const offsetY = padding - bounds.y;
   const routingLanes = edgeRoutingLanes(graph.edges);
+  const categories = categoryFrames ? categoryBounds(graph, positions, dimensions) : [];
+  const categoryMarkup = categories.map(box =>
+    '<g class="map-category" transform="translate(' + box.x + ' ' + box.y + ')"><title>' + escapeXml(box.name) + '</title>' +
+    '<rect width="' + box.width + '" height="' + box.height + '" rx="22" fill="var(--export-card)" fill-opacity=".28" stroke="var(--export-border)"/></g>'
+  ).join('');
+  const categoryHeaders = categories.map(box =>
+    '<g transform="translate(' + box.x + ' ' + box.y + ')">' +
+    '<rect x="8" y="8" width="' + (box.width - 16) + '" height="34" rx="12" fill="var(--export-canvas)" fill-opacity=".96"/>' +
+    '<circle cx="24" cy="26" r="3" fill="' + palette.accent + '"/>' +
+    '<text x="36" y="30" font-family="system-ui,sans-serif" font-size="12" font-weight="650" fill="var(--export-foreground)">' + escapeXml(categoryTitle(box.name, box.width)) + '</text>' +
+    '<text x="' + (box.width - 24) + '" y="30" text-anchor="end" font-family="ui-monospace,monospace" font-size="10" fill="var(--export-muted)">' + box.total + '</text></g>'
+  ).join('');
   const edgeMarkup = graph.edges.map((edge, index) => {
-    const geometry = edgeGeometry(edge, index, positions, dimensions, routingLanes.get(index));
+    const geometry = edgeGeometry(edge, index, positions, dimensions, routingLanes.get(index), routing);
     if (!geometry) return "";
     const hasLabel = Boolean(String(edge.label || edge.type || "").trim());
     const sourceName = graph.nodes.find((node) => node.id === edge.source)?.label || edge.source;
@@ -135,7 +150,7 @@ export function buildSvg(graph, theme = "dark") {
   return '<?xml version="1.0" encoding="UTF-8"?>' +
     '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-labelledby="atlas-title atlas-desc" style="--export-canvas:' + palette.canvas + ';--export-card:' + palette.card + ';--export-border:' + palette.border + ';--export-foreground:' + palette.foreground + ';--export-muted:' + palette.muted + '">' +
     '<title id="atlas-title">' + title + '</title><desc id="atlas-desc">' + description + '</desc>' +
-    '<rect width="100%" height="100%" fill="var(--export-canvas)"/><g transform="translate(' + offsetX + ' ' + offsetY + ')">' + edgeMarkup + nodeMarkup + '</g></svg>';
+    '<rect width="100%" height="100%" fill="var(--export-canvas)"/><g transform="translate(' + offsetX + ' ' + offsetY + ')">' + categoryMarkup + edgeMarkup + categoryHeaders + nodeMarkup + '</g></svg>';
 }
 
 export function downloadBlob(blob, filename) {

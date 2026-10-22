@@ -1,10 +1,12 @@
 import { layoutGraph, nodeDimensions } from "./layout.js";
 import { edgeGeometry, edgeRoutingLanes, graphBounds } from "./geometry.js";
+import { createCategoryRouting } from './category-routing.js';
 
 const geometryKey = (graph) =>
   JSON.stringify([
     graph.nodes.map((node) => [
       node.id,
+      node.group,
       node.position?.x,
       node.position?.y,
       nodeDimensions(node).height,
@@ -19,15 +21,17 @@ const geometryKey = (graph) =>
   ]);
 
 // Cache structural geometry independently of descriptions, evidence, selection,
-// search and camera. Dragging changes only one position and incident routes.
+// search and camera. Category drags also recheck routes near changed obstacles.
 export function createGraphGeometryCache({
   layout = layoutGraph,
   route = edgeGeometry,
   bounds = graphBounds,
+  categoryFrames = false,
 } = {}) {
   const entries = new WeakMap();
   const get = (graph) => {
-    const key = geometryKey(graph);
+    const framesEnabled = Boolean(typeof categoryFrames === 'function' ? categoryFrames() : categoryFrames);
+    const key = JSON.stringify([framesEnabled, geometryKey(graph)]);
     let entry = entries.get(graph);
     if (entry?.key === key) return entry;
     const incident = new Map(graph.nodes.map((node) => [node.id, new Set()]));
@@ -37,12 +41,14 @@ export function createGraphGeometryCache({
     });
     entry = {
       key,
-      layout: layout(graph),
+      layout: layout(graph, { categoryFrames: framesEnabled }),
+      categoryFrames: framesEnabled,
       lanes: edgeRoutingLanes(graph.edges),
       incident,
       geometry: new Map(),
       bounds: null,
     };
+    entry.routing = framesEnabled ? createCategoryRouting(graph, entry.layout.positions, entry.layout.dimensions) : null;
     entries.set(graph, entry);
     return entry;
   };
@@ -58,6 +64,7 @@ export function createGraphGeometryCache({
             entry.layout.positions,
             entry.layout.dimensions,
             entry.lanes.get(index),
+            entry.routing,
           ),
         );
       return entry.geometry.get(index);
@@ -68,6 +75,8 @@ export function createGraphGeometryCache({
         graph,
         entry.layout.positions,
         entry.layout.dimensions,
+        entry.routing,
+        { categoryFrames: entry.categoryFrames },
       ));
     },
     move(graph, nodeId, position) {
@@ -76,9 +85,31 @@ export function createGraphGeometryCache({
       const entry = entries.get(graph) || get(graph);
       if (!entry.layout.positions.has(nodeId)) return null;
       entry.layout.positions.set(nodeId, { x: position.x, y: position.y });
-      entry.key = geometryKey(graph);
+      entry.key = JSON.stringify([entry.categoryFrames, geometryKey(graph)]);
       entry.bounds = null;
-      const affected = entry.incident.get(nodeId) || new Set();
+      const affected = new Set(entry.incident.get(nodeId) || []);
+      if (entry.routing) {
+        const previousRouting = entry.routing;
+        entry.routing = createCategoryRouting(graph, entry.layout.positions, entry.layout.dimensions);
+        const nextByKey = new Map(entry.routing.obstacles.map(rect => [rect.key, rect]));
+        const changed = [];
+        for (const previous of previousRouting.obstacles) {
+          const next = nextByKey.get(previous.key);
+          if (!next || ['left', 'right', 'top', 'bottom'].some(key => previous[key] !== next[key])) { changed.push(previous); if (next) changed.push(next); }
+        }
+        // A new/moved obstacle can affect a non-incident edge. Cached control
+        // hulls conservatively bound curves and rounded detours; routes far
+        // from the changed area retain their geometry and mounted SVG paths.
+        for (const [index, geometry] of entry.geometry) {
+          if (affected.has(index)) continue;
+          const edge = graph.edges[index], source = entry.routing.owners.get(edge.source), target = entry.routing.owners.get(edge.target);
+          const relevant = changed.filter(rect => rect.key !== source && rect.key !== target && rect.key !== 'node:' + edge.source && rect.key !== 'node:' + edge.target && (!rect.owner || rect.owner === source || rect.owner === target));
+          if (!relevant.length) continue;
+          const left = Math.min(...geometry.points.map(point => point.x)), right = Math.max(...geometry.points.map(point => point.x));
+          const top = Math.min(...geometry.points.map(point => point.y)), bottom = Math.max(...geometry.points.map(point => point.y));
+          if (relevant.some(rect => rect.left <= right && rect.right >= left && rect.top <= bottom && rect.bottom >= top)) affected.add(index);
+        }
+      }
       for (const index of affected) entry.geometry.delete(index);
       return { entry, affected };
     },
