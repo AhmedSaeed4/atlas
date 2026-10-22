@@ -1,12 +1,16 @@
 import { layoutGraph, nodeDimensions } from "./layout.js";
 import { edgeGeometry, edgeRoutingLanes, graphBounds } from "./geometry.js";
+import { createCategoryRouting } from './category-routing.js';
 
 const geometryKey = (graph) =>
   JSON.stringify([
     graph.nodes.map((node) => [
       node.id,
+      node.group,
       node.position?.x,
       node.position?.y,
+      node.framePosition?.x,
+      node.framePosition?.y,
       nodeDimensions(node).height,
     ]),
     graph.edges.map((edge) => [
@@ -19,15 +23,17 @@ const geometryKey = (graph) =>
   ]);
 
 // Cache structural geometry independently of descriptions, evidence, selection,
-// search and camera. Dragging changes only one position and incident routes.
+// search and camera. Category drags also recheck routes near changed obstacles.
 export function createGraphGeometryCache({
   layout = layoutGraph,
   route = edgeGeometry,
   bounds = graphBounds,
+  categoryFrames = false,
 } = {}) {
   const entries = new WeakMap();
   const get = (graph) => {
-    const key = geometryKey(graph);
+    const framesEnabled = Boolean(typeof categoryFrames === 'function' ? categoryFrames() : categoryFrames);
+    const key = JSON.stringify([framesEnabled, geometryKey(graph)]);
     let entry = entries.get(graph);
     if (entry?.key === key) return entry;
     const incident = new Map(graph.nodes.map((node) => [node.id, new Set()]));
@@ -37,14 +43,51 @@ export function createGraphGeometryCache({
     });
     entry = {
       key,
-      layout: layout(graph),
+      layout: layout(graph, { categoryFrames: framesEnabled }),
+      categoryFrames: framesEnabled,
       lanes: edgeRoutingLanes(graph.edges),
       incident,
       geometry: new Map(),
       bounds: null,
     };
+    entry.routing = framesEnabled ? createCategoryRouting(graph, entry.layout.positions, entry.layout.dimensions) : null;
     entries.set(graph, entry);
     return entry;
+  };
+  const moveMany = (graph, positions) => {
+      const entry = entries.get(graph) || get(graph);
+      if (!positions?.size || [...positions].some(([id, point]) => !entry.layout.positions.has(id) || !Number.isFinite(point?.x) || !Number.isFinite(point?.y))) return null;
+      const affected = new Set();
+      for (const [id, point] of positions) {
+        entry.layout.positions.set(id, { x: point.x, y: point.y });
+        for (const index of entry.incident.get(id) || []) affected.add(index);
+      }
+      entry.key = JSON.stringify([entry.categoryFrames, geometryKey(graph)]);
+      entry.bounds = null;
+      entry.groupConnections = null;
+      if (entry.routing) {
+        const previousRouting = entry.routing;
+        entry.routing = createCategoryRouting(graph, entry.layout.positions, entry.layout.dimensions);
+        const nextByKey = new Map(entry.routing.obstacles.map(rect => [rect.key, rect]));
+        const changed = [];
+        for (const previous of previousRouting.obstacles) {
+          const next = nextByKey.get(previous.key);
+          if (!next || ['left', 'right', 'top', 'bottom'].some(key => previous[key] !== next[key])) { changed.push(previous); if (next) changed.push(next); }
+        }
+        // Cached control hulls bound curves/detours. Recheck stationary routes
+        // only where the moved group/cards can affect their obstacle corridor.
+        for (const [index, geometry] of entry.geometry) {
+          if (affected.has(index) || !geometry) continue;
+          const edge = graph.edges[index], source = entry.routing.owners.get(edge.source), target = entry.routing.owners.get(edge.target);
+          const relevant = changed.filter(rect => rect.key !== source && rect.key !== target && rect.key !== 'node:' + edge.source && rect.key !== 'node:' + edge.target && (!rect.owner || rect.owner === source || rect.owner === target));
+          if (!relevant.length) continue;
+          const left = Math.min(...geometry.points.map(point => point.x)), right = Math.max(...geometry.points.map(point => point.x));
+          const top = Math.min(...geometry.points.map(point => point.y)), bottom = Math.max(...geometry.points.map(point => point.y));
+          if (relevant.some(rect => rect.left <= right && rect.right >= left && rect.top <= bottom && rect.bottom >= top)) affected.add(index);
+        }
+      }
+      for (const index of affected) entry.geometry.delete(index);
+      return { entry, affected };
   };
   return Object.freeze({
     get,
@@ -58,6 +101,7 @@ export function createGraphGeometryCache({
             entry.layout.positions,
             entry.layout.dimensions,
             entry.lanes.get(index),
+            entry.routing,
           ),
         );
       return entry.geometry.get(index);
@@ -68,20 +112,14 @@ export function createGraphGeometryCache({
         graph,
         entry.layout.positions,
         entry.layout.dimensions,
+        entry.routing,
+        { categoryFrames: entry.categoryFrames },
       ));
     },
     move(graph, nodeId, position) {
-      if (!Number.isFinite(position?.x) || !Number.isFinite(position?.y))
-        return null;
-      const entry = entries.get(graph) || get(graph);
-      if (!entry.layout.positions.has(nodeId)) return null;
-      entry.layout.positions.set(nodeId, { x: position.x, y: position.y });
-      entry.key = geometryKey(graph);
-      entry.bounds = null;
-      const affected = entry.incident.get(nodeId) || new Set();
-      for (const index of affected) entry.geometry.delete(index);
-      return { entry, affected };
+      return moveMany(graph, new Map([[nodeId, position]]));
     },
+    moveMany,
     invalidate(graph) {
       entries.delete(graph);
     },
@@ -132,18 +170,23 @@ export function updateDraggedGraph({
   cards,
   edges,
 }) {
-  const update = cache.move(graph, nodeId, position),
-    card = cards.get(nodeId);
-  if (!update || !card) return false;
-  card.classList.remove("entering");
-  card.setAttribute(
-    "transform",
-    "translate(" + position.x + " " + position.y + ")",
-  );
+  return updateDraggedNodes({ graph, positions: new Map([[nodeId, position]]), cache, cards, edges });
+}
+
+export function updateDraggedNodes({ graph, positions, cache, cards, edges }) {
+  const update = cache.moveMany(graph, positions);
+  if (!update) return false;
+  for (const [id, position] of positions) {
+    const card = cards.get(id);
+    if (!card) continue;
+    card.classList.remove('entering');
+    card.setAttribute('transform', `translate(${position.x} ${position.y})`);
+  }
   for (const index of update.affected) {
-    const group = edges.get(index),
-      geometry = cache.edge(graph, index, update.entry);
-    if (!group || !geometry) continue;
+    const group = edges.get(index);
+    if (!group) continue;
+    const geometry = cache.edge(graph, index, update.entry);
+    if (!geometry) continue;
     for (const path of group.querySelectorAll(".edge-path,.edge-hit-target"))
       path.setAttribute("d", geometry.path);
     group.querySelector(".edge-arrow")?.setAttribute("d", geometry.arrowPath);

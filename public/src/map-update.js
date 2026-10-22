@@ -3,7 +3,7 @@ import {
   assertGraphJsonWithinLimit,
 } from "./schema.js";
 const withoutPosition = (node) => {
-  const { position, ...rest } = node;
+  const { position, framePosition, ...rest } = node;
   return rest;
 };
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -24,11 +24,11 @@ export function compareGraphVersions(before, after) {
     edges = changes(before.edges, after.edges);
   const projectChanged = !equal(before.project, after.project);
   const previous = new Map(
-    before.nodes.map((node) => [node.id, node.position]),
+    before.nodes.map((node) => [node.id, [node.position, node.framePosition]]),
   );
   const moved = after.nodes.filter(
     (node) =>
-      previous.has(node.id) && !equal(previous.get(node.id), node.position),
+      previous.has(node.id) && !equal(previous.get(node.id), [node.position, node.framePosition]),
   );
   return {
     nodes,
@@ -62,6 +62,8 @@ export function prepareMapUpdate(
       nodes: graph.nodes.map((node) => {
         const previous = old.get(node.id);
         if (!previous) return node;
+        const { framePosition, ...content } = node;
+        node = previous.framePosition && previous.group === node.group ? { ...content, framePosition: { ...previous.framePosition } } : content;
         const point = previous.position || positions?.get(node.id);
         if (!point) {
           const { position, ...rest } = node;

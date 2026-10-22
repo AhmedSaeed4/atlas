@@ -36,6 +36,7 @@ export function branchEdgeCandidate(graph, {
   relationship = "",
   relationshipType = "",
   position,
+  positionField = 'position',
   ids = null,
 } = {}) {
   if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error("The current map is unavailable.");
@@ -69,7 +70,7 @@ export function branchEdgeCandidate(graph, {
     source: "",
     group: "",
     junction: true,
-    position: { x: position.x, y: position.y },
+    [positionField === 'framePosition' ? 'framePosition' : 'position']: { x: position.x, y: position.y },
   };
   const edges = graph.edges.flatMap((edge) => edge.id !== sourceEdge.id ? [edge] : [
     { ...edge, target: junctionId },

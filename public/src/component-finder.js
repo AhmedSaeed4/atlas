@@ -194,7 +194,7 @@ export function initExplorationControls({
         if (item.group)
           groups.set(item.group, (groups.get(item.group) || 0) + 1);
       const next =
-        JSON.stringify([...groups]) + JSON.stringify([...state.collapsed]);
+        JSON.stringify([...groups]) + JSON.stringify([...state.collapsed]) + Boolean(state.categoryFrames);
       if (next === signature) return;
       signature = next;
       const list = byId("explore-groups");
@@ -204,10 +204,16 @@ export function initExplorationControls({
           node(
             "p",
             "settings-copy",
-            "This map has no named groups. Agents can include a group on each component.",
+            "No categories yet. Edit a component and enter a category name to create one.",
           ),
         );
       for (const [name, count] of groups) {
+        if (state.categoryFrames) {
+          const category = node('div', 'category-frame-summary');
+          category.append(node('span', '', name), node('span', 'category-frame-summary-count', String(count)));
+          list.append(category);
+          continue;
+        }
         const action = node(
           "button",
           "group-fold-button",

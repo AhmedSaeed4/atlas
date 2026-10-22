@@ -1,4 +1,7 @@
 import { NODE_HEIGHT, NODE_WIDTH, nodeDimensions } from "./layout.js";
+import { categoryBounds } from './map-categories.js';
+import { createCategoryRouting, routeCategoryEdge } from './category-routing.js';
+import { buildGroupConnections } from './group-connections.js';
 
 const LABEL_LIMIT = 18;
 export const edgeLabelText = (edge) => {
@@ -29,7 +32,7 @@ export function edgeRoutingLanes(edges) {
   }
   return lanes;
 }
-export function edgeGeometry(edge, index, positions, nodeSizes = null, laneOffset = 0) {
+export function edgeGeometry(edge, index, positions, nodeSizes = null, laneOffset = 0, routing = null) {
   const startNode = positions.get(edge.source);
   const endNode = positions.get(edge.target);
   if (!startNode || !endNode) return null;
@@ -59,8 +62,10 @@ export function edgeGeometry(edge, index, positions, nodeSizes = null, laneOffse
       p2 = { x: p3.x - bend, y: p3.y + lane };
     }
   }
-  const point = midpoint(p0, p1, p2, p3);
-  const angle = Math.atan2(p3.y - p2.y, p3.x - p2.x);
+  const detour = routeCategoryEdge(edge, [p0, p1, p2, p3], routing, lane);
+  const point = detour?.labelPoint || midpoint(p0, p1, p2, p3);
+  const beforeEnd = detour ? detour.points.at(-2) : p2;
+  const angle = Math.atan2(p3.y - beforeEnd.y, p3.x - beforeEnd.x);
   const arrowSize = 7;
   const arrowHalfAngle = .48;
   const arrowPoint = (rotation) => ({
@@ -75,17 +80,18 @@ export function edgeGeometry(edge, index, positions, nodeSizes = null, laneOffse
   const label = edgeLabelText(edge);
   const labelWidth = Math.max(44, label.length * 5.3 + 14);
   return {
-    points: [p0, p1, p2, p3],
+    points: detour?.points || [p0, p1, p2, p3],
     arrowPoints: [arrowA, p3, arrowB],
-    path: "M " + p0.x + " " + p0.y + " C " + p1.x + " " + p1.y + " " + p2.x + " " + p2.y + " " + p3.x + " " + p3.y,
+    path: detour?.path || "M " + p0.x + " " + p0.y + " C " + p1.x + " " + p1.y + " " + p2.x + " " + p2.y + " " + p3.x + " " + p3.y,
     arrowPath,
     label, fullLabel, labelX: point.x, labelY, labelWidth,
   };
 }
 
-export function graphBounds(graph, positions, nodeSizes = null) {
+export function graphBounds(graph, positions, nodeSizes = null, routing = undefined, { categoryFrames = false } = {}) {
   if (!graph.nodes.length) return { x: 0, y: 0, width: 1, height: 1 };
   const sizes = nodeSizes || new Map(graph.nodes.map((node) => [node.id, nodeDimensions(node)]));
+  routing = routing === undefined ? (categoryFrames ? createCategoryRouting(graph, positions, sizes) : null) : routing;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -103,9 +109,23 @@ export function graphBounds(graph, positions, nodeSizes = null) {
     include(point.x, point.y);
     include(point.x + size.width, point.y + size.height);
   }
+  for (const box of categoryFrames ? categoryBounds(graph, positions, sizes) : []) {
+    include(box.x, box.y);
+    include(box.x + box.width, box.y + box.height);
+  }
   const routingLanes = edgeRoutingLanes(graph.edges);
+  const shared = categoryFrames ? buildGroupConnections(graph, { positions, dimensions: sizes }) : null;
+  for (const wire of shared?.wires || []) {
+    for (const point of wire.geometry.points) include(point.x, point.y);
+    if (wire.kind === 'trunk' && wire.label) {
+      const width = wire.label.length * 5.3 + 18;
+      include(wire.geometry.labelX - width / 2, wire.geometry.labelY - 10);
+      include(wire.geometry.labelX + width / 2, wire.geometry.labelY + 7);
+    }
+  }
   graph.edges.forEach((edge, index) => {
-    const geometry = edgeGeometry(edge, index, positions, sizes, routingLanes.get(index));
+    if (shared?.crossEdges.has(index)) return;
+    const geometry = edgeGeometry(edge, index, positions, sizes, routingLanes.get(index), routing);
     if (!geometry) return;
     for (const point of geometry.points) include(point.x, point.y);
     for (const point of geometry.arrowPoints) include(point.x, point.y);

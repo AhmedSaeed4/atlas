@@ -2,6 +2,7 @@ import { canonicalWorkspaceUrl, workspaceBaseUrl } from "./routing.js";
 import { normalizeGraph, normalizeEditableGraph, assertGraphJsonWithinLimit, serializeGraphJson, MAX_IMPORT_BYTES, LIMITS, newEdgeId, newNodeId } from "./schema.js";
 import { createRandomWorkspaceId } from "./cloud-model.js";
 import { traceRoutes } from "./traces.js";
+import { layoutGraph } from './layout.js';
 import { nodeMatchesQuery, projectCollapsedGroups } from "./graph-exploration.js";
 import { initComponentFinder, initExplorationControls } from "./component-finder.js";
 import { LIBRARY_PREFERENCES_KEY, createLibraryPreferences, filterWorkspaceLibrary, editedLabel } from "./workspace-library-view.js";
@@ -11,7 +12,10 @@ import { bindDialogBackdropClose } from "./dialog-dismissal.js";
 import { resizeGraphCamera } from "./graph-camera.js";
 import { appendMapSettingsAction } from "./map-settings-actions.js";
 import { sameMapContext, compareGraphVersions } from "./map-update.js";
-import { createGraphGeometryCache, createFrameBatch, updateDraggedGraph } from "./graph-render-cache.js";
+import { createGraphGeometryCache, createFrameBatch, updateDraggedGraph, updateDraggedNodes } from "./graph-render-cache.js";
+import { renderCategoryContainers, scaleCategoryHeaders, createCategoryFramePreferences } from './map-categories.js';
+import { groupConnectionPlan } from './group-connections.js';
+import { renderGroupConnectionWires } from './group-connection-view.js';
 import { SAMPLE_GRAPHS } from "./samples.js";
 import { createProjectId, LIBRARY_STORAGE_KEY } from "./storage.js";
 import { createLocalLibrary, reconcileLocalLibrary } from "./local-library.js";
@@ -68,6 +72,8 @@ let touchInteractionActive = false;
 let touchSelectedEdge = null;
 let searchTerm = "";
 let traceMode='downstream', collapsedGroups=new Set(), explorationScope='', projectionMemo=null;
+let categoryFramesEnabled = false;
+let selectedGroupWire = null;
 let componentFinder=null, explorationControls=null, mountedTimelineGraph=null;
 let editingNodeId = null;
 let editingEdgeId = null;
@@ -105,13 +111,22 @@ const droppedFileGate = createRevisionGate();
 let fitAnimationFrame = 0;
 let fitAnimationSequence = 0;
 let animateStructure = true;
-const graphGeometry = createGraphGeometryCache();
+const graphGeometry = createGraphGeometryCache({ categoryFrames: () => categoryFramesEnabled });
 let mountedGraph = null, mountedCards = new Map(), mountedEdges = new Map();
 const dragPaint = createFrameBatch(({graph,projectId,nodeId,position}) => {
   const project=projectById(projectId);
   const projected=presentationGraph();
   if(!dragState || dragState.kind!=='node' || dragState.id!==nodeId || activeProject()!==project || project?.graph!==graph || mountedGraph!==projected)return;
   updateDraggedGraph({graph:projected,nodeId,position,cache:graphGeometry,cards:mountedCards,edges:mountedEdges});
+  renderMapCategories(projected, graphGeometry.get(projected).layout);
+  renderSharedConnections(projected);
+});
+const categoryDragPaint = createFrameBatch(({ state, positions }) => {
+  const project = projectById(state.projectId), graph = presentationGraph();
+  if (dragState !== state || activeProject() !== project || project?.graph !== state.graphRef || mountedGraph !== graph) return;
+  updateDraggedNodes({ graph, positions, cache: graphGeometry, cards: mountedCards, edges: mountedEdges });
+  renderMapCategories(graph, graphGeometry.get(graph).layout);
+  renderSharedConnections(graph);
 });
 let lastStorageError = "";
 let backupTools = null;
@@ -124,6 +139,7 @@ let transform = { x: 0, y: 0, scale: 1 };
 let viewMode = "graph";
 const CLOUD_ASSOCIATIONS_KEY = "atlas.online.associations.v1";
 const onlineStorage = (() => { try { return window.localStorage; } catch { return null; } })();
+const categoryFramePreferences = createCategoryFramePreferences(onlineStorage);
 const workspaceNavigation = createWorkspaceNavigation({
   storage: onlineStorage,
   tabStorage: (() => { try { return window.sessionStorage; } catch { return null; } })(),
@@ -2771,6 +2787,7 @@ function refreshGraphPresentation() {
 }
 function refreshTraceStyles() {
   const graph = presentationGraph();
+  renderMapCategories(graph, graphGeometry.get(graph).layout);
   const trace = traceRoutes(graph, selectedNodeId, traceMode);
   const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   const matches = new Set(graph.nodes.filter((node) => !searchTerm || nodeMatchesQuery(node,searchTerm)).map((node) => node.id));
@@ -2800,8 +2817,10 @@ function refreshTraceStyles() {
     group.setAttribute("aria-pressed", String(group.dataset.edgeId === selectedEdgeId));
     setEdgeTraceState(group, group.querySelector(".edge-path"), group.querySelector(".edge-arrow"), connected);
   }
+  renderSharedConnections(graph);
 }
 function setViewportTransform() {
+  scaleCategoryHeaders(byId('categories-layer'), transform.scale);
   byId("viewport").setAttribute("transform", "translate(" + transform.x + " " + transform.y + ") scale(" + transform.scale + ")");
   const percent = transform.scale * 100;
   byId("zoom-label").textContent = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
@@ -2888,7 +2907,47 @@ function updateGraphEmptyState() {
   byId("node-count").textContent = isOnlineSession() && onlineState.status === "loading" && !hasProject ? "Opening map…" : graph.nodes.length + (graph.nodes.length === 1 ? " component" : " components");
   byId("graph-count-label").textContent = graph.nodes.length + " nodes / " + graph.edges.length + " edges";
 }
+function renderMapCategories(graph, layout) {
+  if (!categoryFramesEnabled) { byId('categories-layer').replaceChildren(); byId('category-headers-layer').replaceChildren(); return; }
+  renderCategoryContainers(byId('categories-layer'), graph, layout, { excludedTypes, headerLayer: byId('category-headers-layer'),
+    onDrag: canMutateCurrent() ? beginCategoryDrag : null, onMove: canMutateCurrent() ? moveCategoryWithKeyboard : null });
+}
+function renderSharedConnections(graph = presentationGraph()) {
+  const plan = categoryFramesEnabled ? groupConnectionPlan(graph, graphGeometry.get(graph), excludedTypes) : null;
+  renderGroupConnectionWires(byId('edges-layer'), plan, {
+    graph, selectedEdgeIds: new Set(currentSelectedGroupWire(graph)?.edgeIndexes.map(index => graph.edges[index].id) || [selectedEdgeId]),
+    selectedNodeId, trace: traceRoutes(graph, selectedNodeId, traceMode), traceMode, focusedType,
+    onSelect(wire) {
+      selectedNodeId = null;
+      selectedEdgeId = graph.edges[wire.edgeIndexes[0]].id;
+      touchSelectedEdge = null;
+      selectedGroupWire = { graph, id: wire.id, firstEdgeId: selectedEdgeId };
+      renderInspector(); refreshTraceStyles();
+    },
+  });
+}
+function currentSelectedGroupWire(graph) {
+  if (!categoryFramesEnabled || selectedNodeId || selectedGroupWire?.graph !== graph || selectedGroupWire.firstEdgeId !== selectedEdgeId) return null;
+  return groupConnectionPlan(graph, graphGeometry.get(graph), excludedTypes).wires.find(wire => wire.id === selectedGroupWire.id) || null;
+}
+function updateCategoryViewControls() {
+  byId('category-frames-toggle').hidden = viewMode !== 'graph';
+  byId('category-frames-toggle').disabled = !activeProject();
+  byId('category-frames-toggle').setAttribute('aria-pressed', String(categoryFramesEnabled));
+}
+function toggleCategoryFrames() {
+  cancelActiveGesture();
+  categoryFramesEnabled = !categoryFramesEnabled;
+  categoryFramePreferences.set(editHistoryScope(), categoryFramesEnabled);
+  collapsedGroups.clear();
+  projectionMemo = null;
+  animateStructure = false;
+  renderGraph(); renderInspector(); explorationControls?.update();
+  fitGraph(true);
+  if (categoryFramesEnabled && !currentGraph().nodes.some(node => node.group)) showToast('Add a Category in the component editor to create a frame.');
+}
 function renderGraph() {
+  updateCategoryViewControls();
   if (viewMode === 'timeline') {
     try { byId('graph').pauseAnimations(); } catch {}
     animateStructure=false;
@@ -2907,6 +2966,7 @@ function renderGraph() {
   const dimensions = layout.dimensions;
   const edgeLayer = byId("edges-layer");
   const nodeLayer = byId("nodes-layer");
+  renderMapCategories(graph, layout);
   edgeLayer.replaceChildren();
   nodeLayer.replaceChildren();
   const nodeCards = new Map();
@@ -2957,7 +3017,7 @@ function renderGraph() {
       outputPort.addEventListener("pointerdown", (event) => startPortDrag(event, node.id));
       inputPort.addEventListener("pointerenter", () => { if (dragState?.kind === "connection") updatePortPreview(dragState.lastEvent); });
       group.append(inputPort, outputPort);
-      cardText(group, node.type.toUpperCase(), 14, 21, "card-type", 24);
+      cardText(group, node.viewGroup ? 'CATEGORY' : node.type.toUpperCase(), 14, 21, "card-type", 24);
       group.append(svgElement("circle", { class: "card-icon-bg", cx: size.width - 16, cy: 15, r: 7 }));
       group.append(svgElement("path", { class: "card-icon-glyph", d: "M 186 12.5 L 190 15 L 186 17.5 M 186.5 12.5 L 184.5 12.5 M 186.5 17.5 L 184.5 17.5" }));
       group.append(svgElement("circle", { class: "card-icon-node", cx: 184, cy: 12.5, r: 1.2 }));
@@ -3078,7 +3138,9 @@ function renderGraph() {
   }
   const minX = graph.nodes.length ? Math.min(...[...positions.values()].map((point) => point.x)) : 0;
   const maxX = graph.nodes.length ? Math.max(...[...positions.values()].map((point) => point.x)) : 1;
+  const sharedPlan = categoryFramesEnabled ? groupConnectionPlan(graph, geometryEntry, excludedTypes) : null;
   graph.edges.forEach((edge, index) => {
+    if (sharedPlan?.crossEdges.has(index)) return;
     const geometry = graphGeometry.edge(graph, index, geometryEntry);
     if (!geometry) return;
     const sourceNode = nodeById.get(edge.source);
@@ -3087,6 +3149,7 @@ function renderGraph() {
     const fullLabel = geometry.fullLabel || geometry.label;
     const hasLabel = Boolean(String(edge.label || edge.type || "").trim());
     const group = svgElement("g", { class: "edge-group", "data-edge-index": index, "data-edge-id": edge.id, "data-source-type": sourceNode?.type || "component", tabindex: 0, role: "button", "aria-pressed": String(selectedEdgeId === edge.id), "aria-label": (sourceNode?.label || edge.source) + " to " + (targetNode?.label || edge.target) + (hasLabel ? ": " + fullLabel : ", unlabeled connection") });
+    if (sourceNode?.viewGroup || targetNode?.viewGroup) group.classList.add('category-link');
     if (selectedEdgeId === edge.id) group.classList.add("selected");
     if (!visible.has(edge.source) || !visible.has(edge.target)) group.classList.add("filtered");
     if (selectedNodeId && traceMode!=="all" && !trace.edges.has(index)) group.classList.add("dimmed");
@@ -3209,6 +3272,7 @@ function renderGraph() {
       }
     }
   });
+  renderSharedConnections(graph);
   mountedGraph=graph;mountedCards=nodeCards;mountedEdges=edgeGroups;
   animateStructure = false;
   setViewportTransform();
@@ -3273,10 +3337,31 @@ function renderInspector() {
   const container = byId("inspector-content");
   const graph = currentGraph();
   const node = graph.nodes.find((item) => item.id === selectedNodeId);
-  refreshFullscreenInspector(Boolean(node) || (isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)
+  const sharedWire = currentSelectedGroupWire(graph);
+  refreshFullscreenInspector(Boolean(node) || Boolean(sharedWire) || (isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)
     && graph.edges.some(edge => edge.id === selectedEdgeId)));
   container.replaceChildren();
   byId("add-edge").disabled = graph.nodes.length < 1 || !canMutateCurrent();
+  if (sharedWire) {
+    const body = plain('div', 'inspector-body');
+    body.append(plain('span', 'detail-type', 'Shared connection'), plain('h3', 'detail-title', sharedWire.title),
+      plain('p', 'detail-description', 'These original relationships share this wire. Select one to inspect its details.'));
+    const list = plain('div', 'group-relationship-list');
+    const nodeById = new Map(graph.nodes.map(item => [item.id, item]));
+    for (const index of sharedWire.edgeIndexes) {
+      const edge = graph.edges[index];
+      const button = plain('button', 'group-relationship'); button.type = 'button';
+      button.append(plain('strong', '', (nodeById.get(edge.source)?.label || edge.source) + ' → ' + (nodeById.get(edge.target)?.label || edge.target)),
+        plain('span', '', edge.label || edge.type || 'Connection'));
+      button.addEventListener('click', () => {
+        selectedGroupWire = null; selectedEdgeId = edge.id;
+        touchSelectedEdge = { id: edge.id, projectId: activeId, graphRef: activeProject()?.graph };
+        renderInspector(); refreshTraceStyles();
+      });
+      list.append(button);
+    }
+    body.append(list); container.append(body); return;
+  }
   if (!node && isCurrentTouchEdgeSelection(touchSelectedEdge, selectedEdgeId, activeId, activeProject()?.graph)) {
     const edge = graph.edges.find((item) => item.id === selectedEdgeId);
     if (edge) {
@@ -3325,7 +3410,7 @@ function renderInspector() {
   }
   if (node.group) {
     const section = plain("section", "detail-section");
-    section.append(plain("h3", "", "Subsystem"));
+    section.append(plain("h3", "", "Category"));
     section.append(plain("p", "detail-description", node.group));
     body.append(section);
   }
@@ -3588,6 +3673,7 @@ function refreshEdgeSelection() {
     group.classList.toggle("selected", selected);
     group.setAttribute("aria-pressed", String(selected));
   });
+  renderSharedConnections();
 }
 function clearPortTargetHighlight() {
   document.querySelectorAll(".node-card.port-drop-target").forEach((group) => group.classList.remove("port-drop-target"));
@@ -3660,23 +3746,85 @@ function cancelActiveConnection() {
 }
 function cancelActiveGesture() {
   dragPaint.cancel();
+  categoryDragPaint.cancel();
   const state = dragState;
   if (!state) return;
   dragState = null;
-  byId("graph").classList.remove("is-connecting", "is-panning");
+  byId("graph").classList.remove("is-connecting", "is-panning", "is-dragging-category");
   if (state.kind === "connection") {
     clearConnectionPreview();
     clearPortTargetHighlight();
+  } else if (state.kind === 'category' && state.moved) {
+    restoreCategoryPositions(state);
+    const project = projectById(state.projectId);
+    if (activeProject() === project && project?.graph === state.graphRef) renderGraph();
   } else if (state.kind === "node" && state.moved) {
     const node = state.graphRef?.nodes.find((item) => item.id === state.id);
     if (node) {
-      if (state.originalPosition) node.position = { ...state.originalPosition };
-      else delete node.position;
+      if (state.originalPosition) node[state.positionField] = { ...state.originalPosition };
+      else delete node[state.positionField];
       const project = projectById(state.projectId);
       if (project?.id === activeId && project.graph === state.graphRef) renderGraph();
     }
   }
   try { byId("graph").releasePointerCapture(state.pointerId); } catch {}
+}
+function categoryMoveState(name) {
+  if (!categoryFramesEnabled || !canMutateCurrent() || !canStartPointerGesture(dragState)) return null;
+  const project = activeProject(), graph = project?.graph;
+  if (!graph) return null;
+  const layout = graphGeometry.get(presentationGraph()).layout;
+  const members = graph.nodes.filter(node => node.group === name && !node.viewGroup);
+  if (!members.length) return null;
+  return { kind: 'category', name, projectId: project.id, graphRef: graph,
+    origins: new Map(members.map(node => [node.id, { ...layout.positions.get(node.id) }])),
+    positionField: 'framePosition', originals: new Map(members.map(node => [node.id, node.framePosition ? { ...node.framePosition } : null])),
+    baselineText: serializeGraphJson(graph), moved: false };
+}
+function restoreCategoryPositions(state) {
+  for (const node of state.graphRef.nodes) if (state.originals.has(node.id)) {
+    const position = state.originals.get(node.id);
+    if (position) node[state.positionField] = { ...position }; else delete node[state.positionField];
+  }
+}
+function translateCategory(state, dx, dy) {
+  // Clamp the translation, never each member separately, to preserve spacing.
+  dx = clamp(dx, Math.max(...[...state.origins.values()].map(point => -99999 - point.x)), Math.min(...[...state.origins.values()].map(point => 99999 - point.x)));
+  dy = clamp(dy, Math.max(...[...state.origins.values()].map(point => -99999 - point.y)), Math.min(...[...state.origins.values()].map(point => 99999 - point.y)));
+  const positions = new Map();
+  for (const node of state.graphRef.nodes) {
+    const origin = state.origins.get(node.id);
+    if (!origin) continue;
+    node[state.positionField] = { x: origin.x + dx, y: origin.y + dy }; positions.set(node.id, { ...node[state.positionField] });
+  }
+  return positions;
+}
+function finishCategoryMove(state) {
+  const project = projectById(state.projectId);
+  if (!project || activeProject() !== project || project.graph !== state.graphRef) { restoreCategoryPositions(state); return; }
+  try {
+    if (!canMutateCurrent()) throw Error('This map is read-only.');
+    assertGraphJsonWithinLimit(project.graph, { baselineText: state.baselineText });
+  } catch (error) { restoreCategoryPositions(state); renderGraph(); showToast(error.message, 'error'); return; }
+  project.updatedAt = Date.now(); renderLibrary(); persist();
+}
+function beginCategoryDrag(event, name) {
+  if (event.button !== 0) return;
+  const state = categoryMoveState(name);
+  if (!state) return;
+  event.preventDefault(); event.stopPropagation(); stopFitAnimation(); hideGraphContextMenu();
+  const world = currentStageWorldPoint(event.clientX, event.clientY);
+  dragState = Object.assign(state, { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, world });
+  try { byId('graph').setPointerCapture(event.pointerId); } catch {}
+}
+function moveCategoryWithKeyboard(name, dx, dy) {
+  const state = categoryMoveState(name);
+  if (!state) return;
+  stopFitAnimation();
+  const positions = translateCategory(state, dx, dy), graph = presentationGraph();
+  updateDraggedNodes({ graph, positions, cache: graphGeometry, cards: mountedCards, edges: mountedEdges });
+  renderMapCategories(graph, graphGeometry.get(graph).layout); renderSharedConnections(graph);
+  finishCategoryMove(state);
 }
 function beginNodeDrag(event, nodeId) {
   if (!canMutateCurrent()) return;
@@ -3689,7 +3837,8 @@ function beginNodeDrag(event, nodeId) {
   const point = graphGeometry.get(presentationGraph()).layout.positions.get(nodeId);
   if (!point || !project || !node) return;
   const world = currentStageWorldPoint(event.clientX, event.clientY);
-  dragState = { kind: "node", id: nodeId, projectId: project.id, graphRef: graph, originalPosition: node.position ? { ...node.position } : null, baselineText: serializeGraphJson(graph), offsetX: world.x - point.x, offsetY: world.y - point.y, startX: event.clientX, startY: event.clientY, moved: false, pointerId: event.pointerId };
+  const positionField = categoryFramesEnabled ? 'framePosition' : 'position';
+  dragState = { kind: "node", id: nodeId, projectId: project.id, graphRef: graph, positionField, originalPosition: node[positionField] ? { ...node[positionField] } : null, baselineText: serializeGraphJson(graph), offsetX: world.x - point.x, offsetY: world.y - point.y, startX: event.clientX, startY: event.clientY, moved: false, pointerId: event.pointerId };
 }
 function startPan(event) {
   if (event.button !== 0 || !canStartPointerGesture(dragState) || event.target.closest?.(".node-card") || event.target.closest?.(".edge-group") || event.target.closest?.(".graph-context-menu")) return;
@@ -3700,7 +3849,7 @@ function startPan(event) {
 }
 function movePointer(event) {
   if (!dragState || dragState.pointerId !== event.pointerId) return;
-  if (dragState.kind === "node" && !canMutateCurrent()) { cancelActiveGesture(); return; }
+  if (['node', 'category'].includes(dragState.kind) && !canMutateCurrent()) { cancelActiveGesture(); return; }
   if (dragState.kind === "connection") { updatePortPreview(event); return; }
   if (dragState.kind === "pan") {
     const dx = event.clientX - dragState.lastX;
@@ -3721,19 +3870,33 @@ function movePointer(event) {
   }
   const state = dragState;
   const project = projectById(state.projectId);
+  if (state.kind === 'category') {
+    if (!project || activeProject() !== project || project.graph !== state.graphRef) { cancelActiveGesture(); return; }
+    const world = currentStageWorldPoint(event.clientX, event.clientY);
+    const positions = translateCategory(state, world.x - state.world.x, world.y - state.world.y);
+    byId('graph').classList.add('is-dragging-category'); animateStructure = false;
+    categoryDragPaint.schedule({ state, positions }); return;
+  }
   const node = state.graphRef?.nodes.find((item) => item.id === state.id);
   if (!node || !project || activeProject() !== project || project.graph !== state.graphRef) return;
   const world = currentStageWorldPoint(event.clientX, event.clientY);
-  node.position = {
+  node[state.positionField] = {
     x: clamp(world.x - dragState.offsetX, -99999, 99999),
     y: clamp(world.y - dragState.offsetY, -99999, 99999),
   };
   dragState.moved = dragState.moved || movement > 3;
   animateStructure = false;
-  dragPaint.schedule({graph:project.graph,projectId:project.id,nodeId:node.id,position:{...node.position}});
+  dragPaint.schedule({graph:project.graph,projectId:project.id,nodeId:node.id,position:{...node[state.positionField]}});
 }
 function endPointer(event) {
   if (!dragState || dragState.pointerId !== event.pointerId) return;
+  if (dragState.kind === 'category') {
+    if (event.type !== 'pointerup') { cancelActiveGesture(); return; }
+    categoryDragPaint.flush();
+    const state = dragState; dragState = null; byId('graph').classList.remove('is-dragging-category');
+    if (state.moved) finishCategoryMove(state);
+    return;
+  }
   if (event.type === "pointerup") dragPaint.flush(); else dragPaint.cancel();
   if (dragState.kind === "connection") {
     const state = dragState;
@@ -3774,14 +3937,14 @@ function endPointer(event) {
     const project = projectById(state.projectId);
     if (!canMutateCurrent()) {
       const node = state.graphRef?.nodes.find((item) => item.id === state.id);
-      if (node) { if (state.originalPosition) node.position = { ...state.originalPosition }; else delete node.position; renderGraph(); }
+      if (node) { if (state.originalPosition) node[state.positionField] = { ...state.originalPosition }; else delete node[state.positionField]; renderGraph(); }
       return;
     }
     const node = state.graphRef?.nodes.find((item) => item.id === state.id);
     if (!node || !project || activeProject() !== project || project.graph !== state.graphRef) return;
     const restorePosition = () => {
-      if (state.originalPosition) node.position = { ...state.originalPosition };
-      else delete node.position;
+      if (state.originalPosition) node[state.positionField] = { ...state.originalPosition };
+      else delete node[state.positionField];
       renderGraph();
     };
     if (event.type !== "pointerup") { restorePosition(); return; }
@@ -3800,7 +3963,7 @@ function autoLayout() {
   if (!requireMutation("rearrange components")) return;
   const project = activeProject();
   if (!project) return;
-  for (const node of project.graph.nodes) delete node.position;
+  for (const node of project.graph.nodes) delete node[categoryFramesEnabled ? 'framePosition' : 'position'];
   animateStructure = true;
   renderGraph();
   renderInspector();
@@ -4074,6 +4237,14 @@ function openNodeEditor(nodeId = null, { position = null, projectId = null, retu
   byId("node-chart-evidence").value = chart?.evidence || "";
   byId("node-description").value = node?.description || "";
   byId("node-source").value = node?.source || "";
+  byId('node-group').value = node?.group || '';
+  const categoryChoices = byId('node-group-options');
+  categoryChoices.replaceChildren();
+  for (const name of [...new Set(project.graph.nodes.map(item => item.group).filter(Boolean))].sort((a, b) => a.localeCompare(b))) {
+    const option = document.createElement('option');
+    option.value = name;
+    categoryChoices.append(option);
+  }
   byId("node-purpose").value = node?.details?.purpose || "";
   byId("node-operation").value = node?.details?.operation || "";
   byId("node-inputs").value = (node?.details?.inputs || []).join("\n");
@@ -4141,7 +4312,7 @@ function saveNode() {
     label, type,
     description: byId("node-description").value.trim(),
     source: byId("node-source").value.trim(),
-    group: existing?.group || "",
+    group: byId('node-group').value.trim(),
   };
   if (hasDetails) node.details = detailFields;
   else delete node.details;
@@ -4167,8 +4338,8 @@ function saveNode() {
   }
   if (chart) node.chart = chart;
   else delete node.chart;
-  if (existing) node.position = existing.position;
-  else if (context.position) node.position = { x: clamp(context.position.x, -99999, 99999), y: clamp(context.position.y, -99999, 99999) };
+  if (existing) { node.position = existing.position; node.framePosition = existing.framePosition; }
+  else if (context.position) node[categoryFramesEnabled ? 'framePosition' : 'position'] = { x: clamp(context.position.x, -99999, 99999), y: clamp(context.position.y, -99999, 99999) };
   const nextNodes = existing ? graph.nodes.map((item) => item.id === existing.id ? node : item) : [...graph.nodes, node];
   let candidate;
   try { candidate = normalizeEditableGraph({ ...graph, nodes: nextNodes }, { baselineGraph: graph }); }
@@ -4187,7 +4358,7 @@ function saveNode() {
   nodeEditContext = null;
   animateStructure = !existing;
   renderAll();
-  if (!existing) fitGraph(true);
+  if (!existing || node.group !== existing.group) fitGraph(true);
   persist();
 }
 function setDialogFocusTarget(dialogId, target) {
@@ -4409,6 +4580,7 @@ function saveBranch() {
       relationship: byId("branch-label").value,
       relationshipType: byId("branch-type").value,
       position: { x: context.position.x - 18, y: context.position.y - 18 },
+      positionField: categoryFramesEnabled ? 'framePosition' : 'position',
     });
     const junction = candidate.nodes.find((node) => node.junction && !originalGraph.nodes.some((item) => item.id === node.id));
     if (!junction) throw new Error("The junction could not be created.");
@@ -4823,10 +4995,11 @@ async function exportCurrent(kind) {
   const name = safeFilename(graph.project.name);
   if (kind === "json") { exportJson(graph); showToast("Downloaded a JSON backup."); return; }
   const activeTheme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-  if (kind === "svg") { downloadText(buildSvg(graph, activeTheme), name + ".svg", "image/svg+xml;charset=utf-8"); showToast("Downloaded a standalone SVG."); return; }
+  const exportCategoryFrames = categoryFramesEnabled;
+  if (kind === "svg") { downloadText(buildSvg(graph, activeTheme, { categoryFrames: exportCategoryFrames }), name + ".svg", "image/svg+xml;charset=utf-8"); showToast("Downloaded a standalone SVG."); return; }
   if (kind === "png" || kind === "copy-image") {
     try {
-      const blob = await svgToPngBlob(buildSvg(graph, activeTheme));
+      const blob = await svgToPngBlob(buildSvg(graph, activeTheme, { categoryFrames: exportCategoryFrames }));
       if (!isCurrent()) { showToast("Export stopped because the map changed or became unavailable.", "error"); return; }
       if (kind === "png") {
         downloadBlob(blob, name + ".png");
@@ -4839,7 +5012,7 @@ async function exportCurrent(kind) {
       if (!isCurrent()) return;
       if (kind === "copy-image") {
         try {
-          const blob = await svgToPngBlob(buildSvg(graph, activeTheme));
+          const blob = await svgToPngBlob(buildSvg(graph, activeTheme, { categoryFrames: exportCategoryFrames }));
           if (!isCurrent()) return;
           downloadBlob(blob, name + ".png");
           showToast("Image clipboard access is unavailable, so the PNG was downloaded instead.");
@@ -5299,6 +5472,7 @@ function attachEvents() {
   byId("undo-edit").addEventListener("click", () => performEditHistory("undo"));
   byId("redo-edit").addEventListener("click", () => performEditHistory("redo"));
   byId("auto-layout").addEventListener("click", autoLayout);
+  byId('category-frames-toggle').addEventListener('click', toggleCategoryFrames);
   byId("fit-graph").addEventListener("click", () => fitGraph(true));
   byId("zoom-in").addEventListener("click", () => {
     const rect = byId("graph-stage").getBoundingClientRect();
@@ -5309,6 +5483,7 @@ function attachEvents() {
     zoomAt(transform.scale / 1.16, rect.width / 2, rect.height / 2);
   });
   byId("close-inspector").addEventListener("click", () => {
+    if (currentSelectedGroupWire(currentGraph())) { selectedGroupWire = null; selectedEdgeId = null; }
     selectedNodeId = null;
     if (graphFullscreen.isActive()) { selectedEdgeId = null; touchSelectedEdge = null; }
     renderInspector();
@@ -5452,7 +5627,7 @@ function attachEvents() {
     if (!canMutateCurrent()) { event.preventDefault(); return; }
     if (viewMode !== "graph") return;
     const target = event.target;
-    if (target.closest?.(".node-card, .edge-group, .graph-controls, .graph-view-tabs, .canvas-help, #graph-context-menu, .empty-state button, .empty-state a, .empty-state input")) return;
+    if (target.closest?.(".node-card, .edge-group, .group-wire, .graph-controls, .graph-view-tabs, .canvas-help, #graph-context-menu, .empty-state button, .empty-state a, .empty-state input")) return;
     const onMapSurface = target.closest?.("#graph") || target.closest?.(".empty-state") || target === graphStage;
     if (!onMapSurface) return;
     event.preventDefault();
@@ -5540,6 +5715,7 @@ function attachEvents() {
       openImport();
     } else if (event.key === "Escape") {
       if (event.defaultPrevented || document.querySelector("dialog[open]")) return;
+      if (dragState?.kind === 'category') { event.preventDefault(); cancelActiveGesture(); return; }
       if (dragState?.kind === "connection") { event.preventDefault(); cancelActiveConnection(); return; }
       const menu = byId("graph-context-menu");
       if (!menu.hidden) { event.preventDefault(); hideGraphContextMenu({ restoreFocus: true }); return; }
@@ -5559,13 +5735,14 @@ function syncExplorationScope() {
   if (scope === explorationScope) return;
   explorationScope = scope;
   collapsedGroups = new Set();
-  traceMode = "downstream";
+  categoryFramesEnabled = categoryFramePreferences.enabled(scope);
+  traceMode = 'downstream';
   projectionMemo = null;
   componentFinder?.close();
 }
 function presentationGraph() {
   const graph = currentGraph();
-  if (!collapsedGroups.size) return graph;
+  if (categoryFramesEnabled || !collapsedGroups.size) return graph;
   const key = JSON.stringify([
     [...collapsedGroups].sort(),
     [...excludedTypes].sort(),
@@ -5579,6 +5756,7 @@ function presentationGraph() {
   return projected;
 }
 function toggleGroup(name) {
+  if (categoryFramesEnabled) return;
   if (collapsedGroups.has(name)) collapsedGroups.delete(name);
   else {
     collapsedGroups.add(name);
@@ -5676,6 +5854,7 @@ function initExploration() {
       selectedId: selectedNodeId,
       mode: traceMode,
       collapsed: collapsedGroups,
+      categoryFrames: categoryFramesEnabled,
     }),
     onMode(mode) {
       traceMode = mode;
@@ -5686,7 +5865,7 @@ function initExploration() {
     onReset() {
       collapsedGroups.clear();
       projectionMemo = null;
-      traceMode = "downstream";
+      traceMode = 'downstream';
       excludedTypes.clear();
       focusedType = "";
       lockedType = "";
@@ -5739,7 +5918,7 @@ function initMapVersions() {
   mapVersionTools = initMapVersionTools({
     store: workspaceSafety,
     getContext: mapVersionContext,
-    getPositions: () => graphGeometry.get(currentGraph()).layout.positions,
+    getPositions: () => layoutGraph(currentGraph()).positions,
     download: downloadText,
     notify: showToast,
     onApply: async (input, { context }) => {

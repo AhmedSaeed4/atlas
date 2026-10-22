@@ -71,6 +71,20 @@ test("position-only updates are a no-op when keeping existing positions", () => 
     1,
   );
 });
+
+test('frame-only movement is layout, and content updates preserve compatible frame placement separately', () => {
+  const before=graph(); before.nodes[0].group='API'; before.nodes[0].framePosition={x:100,y:200};
+  const after=structuredClone(before); after.nodes[0].framePosition={x:900,y:900};
+  assert.equal(compareGraphVersions(before,after).hasContentChanges,false);
+  assert.equal(compareGraphVersions(before,after).moved.length,1);
+  assert.deepEqual(prepareMapUpdate(before,after).graph,before);
+  after.nodes[0].description='Changed implementation';
+  const kept=prepareMapUpdate(before,after).graph;
+  assert.deepEqual(kept.nodes[0].position,before.nodes[0].position);
+  assert.deepEqual(kept.nodes[0].framePosition,before.nodes[0].framePosition);
+  after.nodes[0].group='Another subsystem';
+  assert.equal(prepareMapUpdate(before,after).graph.nodes[0].framePosition,undefined);
+});
 test("stale previews and account/viewer changes cannot authorize an update to another map", () => {
   const context = {
     key: "cloud:owner:a",
