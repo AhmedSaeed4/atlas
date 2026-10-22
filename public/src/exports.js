@@ -4,6 +4,7 @@ import { chartCompactReadout, chartDescription, chartGeometry, chartPresentation
 import { serializeGraphJson } from "./schema.js";
 import { categoryBounds, categoryTitle } from './map-categories.js';
 import { createCategoryRouting } from './category-routing.js';
+import { buildGroupConnections } from './group-connections.js';
 
 function xmlSafeText(value) {
   let safe = "";
@@ -86,6 +87,19 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
   const offsetY = padding - bounds.y;
   const routingLanes = edgeRoutingLanes(graph.edges);
   const categories = categoryFrames ? categoryBounds(graph, positions, dimensions) : [];
+  const shared = categoryFrames ? buildGroupConnections(graph, { positions, dimensions }) : null;
+  const sharedMarkup = (shared?.wires || []).map(wire => {
+    const { geometry } = wire;
+    const width = wire.label?.length * 5.3 + 18;
+    const label = wire.kind === 'trunk' && wire.label
+      ? '<rect x="' + (geometry.labelX - width / 2) + '" y="' + (geometry.labelY - 10) + '" width="' + width + '" height="17" rx="8" fill="var(--export-card)" stroke="var(--export-border)"/>' +
+        '<text x="' + geometry.labelX + '" y="' + (geometry.labelY + 2) + '" text-anchor="middle" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="9">' + escapeXml(wire.label) + '</text>' : '';
+    const relationships = wire.edgeIndexes.map(index => {
+      const edge = graph.edges[index]; return edge.source + ' → ' + edge.target + ': ' + (edge.label || edge.type || 'connects');
+    }).join('; ');
+    return '<g class="group-wire" data-kind="' + wire.kind + '"><title>' + escapeXml(wire.title + '. ' + relationships) + '</title>' +
+      '<path d="' + geometry.path + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5" stroke-opacity="' + (wire.kind === 'branch' ? '.65' : '1') + '"/>' + label + '</g>';
+  }).join('') + (shared?.ports || []).map(port => '<circle class="group-port" cx="' + port.x + '" cy="' + port.y + '" r="5" fill="var(--export-card)" stroke="' + palette.accent + '" stroke-width="1.6"><title>' + escapeXml(port.group + ' ' + port.direction) + '</title></circle>').join('');
   const categoryMarkup = categories.map(box =>
     '<g class="map-category" transform="translate(' + box.x + ' ' + box.y + ')"><title>' + escapeXml(box.name) + '</title>' +
     '<rect width="' + box.width + '" height="' + box.height + '" rx="22" fill="var(--export-card)" fill-opacity=".28" stroke="var(--export-border)"/></g>'
@@ -98,6 +112,7 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
     '<text x="' + (box.width - 24) + '" y="30" text-anchor="end" font-family="ui-monospace,monospace" font-size="10" fill="var(--export-muted)">' + box.total + '</text></g>'
   ).join('');
   const edgeMarkup = graph.edges.map((edge, index) => {
+    if (shared?.crossEdges.has(index)) return '';
     const geometry = edgeGeometry(edge, index, positions, dimensions, routingLanes.get(index), routing);
     if (!geometry) return "";
     const hasLabel = Boolean(String(edge.label || edge.type || "").trim());
@@ -150,7 +165,7 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
   return '<?xml version="1.0" encoding="UTF-8"?>' +
     '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-labelledby="atlas-title atlas-desc" style="--export-canvas:' + palette.canvas + ';--export-card:' + palette.card + ';--export-border:' + palette.border + ';--export-foreground:' + palette.foreground + ';--export-muted:' + palette.muted + '">' +
     '<title id="atlas-title">' + title + '</title><desc id="atlas-desc">' + description + '</desc>' +
-    '<rect width="100%" height="100%" fill="var(--export-canvas)"/><g transform="translate(' + offsetX + ' ' + offsetY + ')">' + categoryMarkup + edgeMarkup + categoryHeaders + nodeMarkup + '</g></svg>';
+    '<rect width="100%" height="100%" fill="var(--export-canvas)"/><g transform="translate(' + offsetX + ' ' + offsetY + ')">' + categoryMarkup + sharedMarkup + edgeMarkup + categoryHeaders + nodeMarkup + '</g></svg>';
 }
 
 export function downloadBlob(blob, filename) {

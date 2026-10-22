@@ -16,6 +16,19 @@ test("normalizes the version 1 schema and preserves user text as data", () => {
   assert.equal(graph.edges[0].source, "api");
 });
 
+test('frame positions round-trip independently of legacy coordinates and invalid values are omitted', () => {
+  const input = structuredClone(valid);
+  input.nodes[0].position = { x: 900, y: 40 }; input.nodes[0].framePosition = { x: 12, y: -30 };
+  const graph = normalizeGraph(input);
+  assert.deepEqual(graph.nodes[0].position, input.nodes[0].position);
+  assert.deepEqual(graph.nodes[0].framePosition, input.nodes[0].framePosition);
+  assert.deepEqual(normalizeGraph(JSON.parse(serializeGraphJson(graph))), graph);
+  for (const point of [{ x: Infinity, y: 0 }, { x: 0, y: 100000 }, { x: '2', y: 3 }, { x: null, y: 4 }]) {
+    input.nodes[0].framePosition = point;
+    assert.equal(normalizeGraph(input).nodes[0].framePosition, undefined);
+  }
+});
+
 test("supports nested Foglamp graph containers and field aliases", () => {
   const graph = normalizeGraph({
     version: 1,

@@ -73,6 +73,25 @@ test("topology, chart dimensions and external position changes invalidate cached
   assert.notEqual(cache.get(model), entry);
   assert.ok(cache.bounds(model).width > 0);
 });
+
+test('bulk movement updates all members in one cache entry and rejects partial invalid updates', () => {
+  const model = graph(), cache = createGraphGeometryCache(), entry = cache.get(model);
+  const other = { ...entry.layout.positions.get('c') };
+  const positions = new Map(['a', 'b'].map(id => {
+    const point = entry.layout.positions.get(id); return [id, { x: point.x + 80, y: point.y - 35 }];
+  }));
+  for (const node of model.nodes) if (positions.has(node.id)) node.position = positions.get(node.id);
+  const update = cache.moveMany(model, positions);
+  assert.equal(update.entry, entry);
+  assert.equal(cache.get(model), entry);
+  assert.deepEqual(update.affected, new Set([0, 1, 2]));
+  for (const [id, point] of positions) assert.deepEqual(entry.layout.positions.get(id), point);
+  assert.deepEqual(entry.layout.positions.get('c'), other);
+  const before = [...entry.layout.positions];
+  assert.equal(cache.moveMany(model, new Map([['a', { x: 20, y: 30 }], ['b', { x: NaN, y: 0 }]])), null);
+  assert.deepEqual([...entry.layout.positions], before);
+  assert.equal(cache.moveMany(model, new Map()), null);
+});
 test("animation-frame batching paints the latest input once and flushes before completion", () => {
   const callbacks = new Map(),
     painted = [];

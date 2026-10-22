@@ -3,6 +3,10 @@
 .map-category { pointer-events: none; }
 .category-boundary { fill: var(--atlas-card); fill-opacity: .28; stroke: var(--atlas-border); stroke-width: 1; }
 .category-header { pointer-events: none; }
+.category-header.is-movable { pointer-events: all; cursor: grab; touch-action: none; user-select: none; }
+.category-header.is-movable:hover .category-header-hit, .category-header.is-movable:focus-visible .category-header-hit { stroke: var(--atlas-accent); }
+.category-header.is-movable:focus { outline: none; }
+#graph.is-dragging-category, #graph.is-dragging-category .category-header.is-movable { cursor: grabbing; }
 .category-header-hit { fill: var(--atlas-graph-canvas); fill-opacity: .96; stroke: transparent; }
 .category-dot { fill: var(--atlas-accent); }
 .category-name { fill: var(--atlas-foreground); font-family: system-ui, sans-serif; font-size: 12px; font-weight: 650; }
@@ -14,3 +18,18 @@
 .category-frames-toggle[aria-pressed="true"] { border-color: var(--atlas-accent); color: var(--atlas-foreground); background: var(--atlas-card); }
 .category-frame-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--atlas-border); border-radius: 10px; color: var(--atlas-foreground); font-size: 11px; }
 .category-frame-summary-count { color: var(--atlas-muted); font: 10px ui-monospace, monospace; }
+.group-wire { cursor: pointer; }
+.group-wire .edge-path { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.group-wire[data-kind="branch"] .edge-path { stroke-opacity: .65; }
+.group-wire .edge-label { font: 9px system-ui, sans-serif; text-anchor: middle; fill: var(--atlas-muted); }
+.group-wire .edge-label-bg { fill: var(--atlas-card); stroke: var(--atlas-border); stroke-width: .7; }
+.group-wire.dimmed, .group-wire.focus-dimmed { opacity: .15; }
+.group-wire.selected .edge-path, .group-wire:focus-visible .edge-path, .group-wire:hover .edge-path { stroke: var(--atlas-accent); stroke-opacity: 1; stroke-width: 2; }
+.group-wire.selected .edge-label-bg, .group-wire:focus-visible .edge-label-bg { stroke: var(--atlas-accent); }
+.group-wire:focus { outline: none; }
+.group-port { fill: var(--atlas-card); stroke: var(--atlas-accent); stroke-width: 1.6; }
+.group-relationship-list { display: grid; gap: 8px; margin-top: 16px; }
+.group-relationship { display: grid; gap: 5px; width: 100%; padding: 12px; border: 1px solid var(--atlas-border); border-radius: 12px; background: var(--atlas-canvas); color: var(--atlas-foreground); text-align: left; }
+.group-relationship strong { font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
+.group-relationship span { color: var(--atlas-muted); font-size: 10px; overflow-wrap: anywhere; }
+.group-relationship:hover, .group-relationship:focus-visible { border-color: var(--atlas-accent); outline: none; }

@@ -8,6 +8,13 @@ import { gunzipSync } from "node:zlib";
 import { buildAgentPrompt } from "../public/src/prompt.js";
 import { normalizeGraph } from "../public/src/schema.js";
 
+test('frame guidance keeps grouping semantic and leaves placement and shared wires to Atlas', () => {
+  const prompt = buildAgentPrompt('https://atlas.example/workspace');
+  for (const text of ['meaningful subsystem or workflow responsibility', 'not just component type', 'Do not invent category nodes, boundary ports', 'Normally omit position and framePosition', 'edges across groups']) {
+    assert.ok(prompt.includes(text === 'edges across groups' ? 'including connections across groups' : text));
+  }
+});
+
 test("agent prompt gates repository work on an explicit mode and output folder", () => {
   const prompt = buildAgentPrompt("https://atlas.example/view?token=private#old", false);
   const modeQuestion = "Would you like a JSON file to import into Atlas yourself, or should I generate the file and a clickable link that opens it directly in Atlas?";

@@ -107,14 +107,14 @@ test('disconnected and cyclic categories stay separate; large categories use at 
   for (let i = 0; i < rectangles.length; i++) for (let j = i + 1; j < rectangles.length; j++) assert.equal(overlap(rectangles[i], rectangles[j]), false);
 });
 
-test('manual positions survive layout and category dragging rechecks routes without changing stationary node geometry', () => {
+test('deliberate frame positions survive layout and dragging rechecks routes without moving stationary nodes', () => {
   const graph = fixture();
-  graph.nodes[0].position = { x: -500, y: -300 };
+  graph.nodes[0].framePosition = { x: -500, y: -300 };
   const cache = createGraphGeometryCache({ categoryFrames: true }), entry = cache.get(graph);
-  assert.deepEqual(entry.layout.positions.get('web'), graph.nodes[0].position);
+  assert.deepEqual(entry.layout.positions.get('web'), graph.nodes[0].framePosition);
   const other = { ...entry.layout.positions.get('api') }, route = cache.edge(graph, 1);
-  graph.nodes[0].position = { x: -700, y: -500 };
-  cache.move(graph, 'web', graph.nodes[0].position);
+  graph.nodes[0].framePosition = { x: -700, y: -500 };
+  cache.move(graph, 'web', graph.nodes[0].framePosition);
   assert.deepEqual(entry.layout.positions.get('api'), other);
   assert.equal(cache.edge(graph, 1), route);
   const box = categoryBounds(graph, entry.layout.positions, entry.layout.dimensions).find(box => box.name === 'Interface');
@@ -122,6 +122,21 @@ test('manual positions survive layout and category dragging rechecks routes with
   assert.ok(cache.bounds(graph).x <= box.x);
   graph.nodes[0].group = 'Backend';
   assert.notEqual(cache.get(graph), entry);
+});
+
+test('scattered legacy coordinates cannot stretch frames across neighbouring categories', () => {
+  const graph = fixture();
+  graph.nodes[0].position = { x: 0, y: 0 }; graph.nodes[1].position = { x: 1800, y: 0 };
+  graph.nodes[2].position = { x: 600, y: 0 }; graph.nodes[3].position = { x: 800, y: 0 };
+  const before = JSON.stringify(graph), layout = layoutGraph(graph, { categoryFrames: true });
+  const boxes = categoryBounds(graph, layout.positions, layout.dimensions);
+  for (let i=0;i<boxes.length;i++) for(let j=i+1;j<boxes.length;j++) {
+    assert.equal(overlap(boxes[i], boxes[j]), false);
+    const a={...boxes[i],x:boxes[i].x-60,y:boxes[i].y-60,width:boxes[i].width+120,height:boxes[i].height+120};
+    assert.equal(overlap(a, boxes[j]), false);
+  }
+  assert.deepEqual(layoutGraph(graph).positions.get('mobile'), { x: 1800, y: 0 });
+  assert.equal(JSON.stringify(graph), before);
 });
 
 test('many cyclic category blocks wrap into balanced columns instead of one long stack', () => {

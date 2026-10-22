@@ -1,6 +1,7 @@
 import { NODE_HEIGHT, NODE_WIDTH, nodeDimensions } from "./layout.js";
 import { categoryBounds } from './map-categories.js';
 import { createCategoryRouting, routeCategoryEdge } from './category-routing.js';
+import { buildGroupConnections } from './group-connections.js';
 
 const LABEL_LIMIT = 18;
 export const edgeLabelText = (edge) => {
@@ -113,7 +114,17 @@ export function graphBounds(graph, positions, nodeSizes = null, routing = undefi
     include(box.x + box.width, box.y + box.height);
   }
   const routingLanes = edgeRoutingLanes(graph.edges);
+  const shared = categoryFrames ? buildGroupConnections(graph, { positions, dimensions: sizes }) : null;
+  for (const wire of shared?.wires || []) {
+    for (const point of wire.geometry.points) include(point.x, point.y);
+    if (wire.kind === 'trunk' && wire.label) {
+      const width = wire.label.length * 5.3 + 18;
+      include(wire.geometry.labelX - width / 2, wire.geometry.labelY - 10);
+      include(wire.geometry.labelX + width / 2, wire.geometry.labelY + 7);
+    }
+  }
   graph.edges.forEach((edge, index) => {
+    if (shared?.crossEdges.has(index)) return;
     const geometry = edgeGeometry(edge, index, positions, sizes, routingLanes.get(index), routing);
     if (!geometry) return;
     for (const point of geometry.points) include(point.x, point.y);

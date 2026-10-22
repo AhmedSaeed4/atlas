@@ -26,16 +26,21 @@ export function createCategoryRouting(graph, positions, dimensions) {
     const point = positions.get(node.id), size = dimensions.get(node.id);
     if (point && size) obstacles.push({ ...rectangle({ ...point, ...size }, 'node:' + node.id), owner: node.group ? 'category:' + node.group : null });
   }
-  return { owners, obstacles };
+  return { owners, obstacles, boxes: new Map(boxes.map(box => ['category:' + box.name, box])) };
 }
 
 // A lazy rectilinear visibility grid: only visited intersections are allocated.
 // Grid lines follow obstacle margins, so routes can go around several boxes
 // without introducing layout nodes, changing map data, or using a dependency.
-function detour(start, end, obstacles) {
+function detour(start, end, obstacles, occupied = []) {
   if (obstacles.some(rect => inside(start, rect) || inside(end, rect))) return null;
-  const xs = [...new Set([start.x, end.x, ...obstacles.flatMap(rect => [rect.left, rect.right])])].sort((a, b) => a - b);
-  const ys = [...new Set([start.y, end.y, ...obstacles.flatMap(rect => [rect.top, rect.bottom])])].sort((a, b) => a - b);
+  const laneXs = [], laneYs = [];
+  for (const [a, b] of occupied) {
+    if (a.x === b.x) laneXs.push(a.x - 16, a.x + 16);
+    if (a.y === b.y) laneYs.push(a.y - 16, a.y + 16);
+  }
+  const xs = [...new Set([start.x, end.x, ...laneXs, ...obstacles.flatMap(rect => [rect.left, rect.right])])].sort((a, b) => a - b);
+  const ys = [...new Set([start.y, end.y, ...laneYs, ...obstacles.flatMap(rect => [rect.top, rect.bottom])])].sort((a, b) => a - b);
   const width = xs.length, startX = xs.indexOf(start.x), startY = ys.indexOf(start.y), endX = xs.indexOf(end.x), endY = ys.indexOf(end.y);
   const heap = [], costs = new Map(), previous = new Map();
   const push = value => {
@@ -76,7 +81,21 @@ function detour(start, end, obstacles) {
       const to = { x: xs[x], y: ys[y] };
       const possible = dx ? candidates('y', from.y) : candidates('x', from.x);
       if (possible.some(rect => segmentCrossesRectangle(from, to, rect))) continue;
-      const cost = current.cost + Math.abs(to.x - from.x) + Math.abs(to.y - from.y) + (current.direction && direction !== current.direction ? 18 : 0);
+      let congestion = 0;
+      for (const [a, b] of occupied) {
+        const parallel = (a.x === b.x) === !dx;
+        if (parallel) {
+          const distance = dx ? Math.abs(a.y - from.y) : Math.abs(a.x - from.x);
+          if (distance >= 16) continue;
+          const overlap = dx ? Math.min(Math.max(a.x, b.x), Math.max(from.x, to.x)) - Math.max(Math.min(a.x, b.x), Math.min(from.x, to.x))
+            : Math.min(Math.max(a.y, b.y), Math.max(from.y, to.y)) - Math.max(Math.min(a.y, b.y), Math.min(from.y, to.y));
+          if (overlap > 0) congestion += overlap * (16 - distance) * .6;
+        } else {
+          const x = dx ? a.x : from.x, y = dx ? from.y : a.y;
+          if (x > Math.min(from.x, to.x) - .01 && x < Math.max(from.x, to.x) + .01 && y > Math.min(from.y, to.y) - .01 && y < Math.max(from.y, to.y) + .01 && x >= Math.min(a.x,b.x) && x <= Math.max(a.x,b.x) && y >= Math.min(a.y,b.y) && y <= Math.max(a.y,b.y)) congestion += 24;
+        }
+      }
+      const cost = current.cost + Math.abs(to.x - from.x) + Math.abs(to.y - from.y) + congestion + (current.direction && direction !== current.direction ? 18 : 0);
       const nextKey = key(x, y, direction);
       if (cost >= (costs.get(nextKey) ?? Infinity)) continue;
       costs.set(nextKey, cost); previous.set(nextKey, current);
@@ -103,24 +122,42 @@ export function routeCategoryEdge(edge, curve, context, lane = 0) {
   if (!context) return null;
   const source = context.owners.get(edge.source), target = context.owners.get(edge.target);
   let obstacles = context.obstacles.filter(rect => rect.key !== source && rect.key !== target && rect.key !== 'node:' + edge.source && rect.key !== 'node:' + edge.target && (!rect.owner || rect.owner === source || rect.owner === target));
+  // Internal back-edges belong inside the frame, below its title. Treat the
+  // outside as walls so the ordinary loop cannot pass over another category.
+  const box = source === target && context.boxes?.get(source);
+  if (box) {
+    const left = box.x + 8, right = box.x + box.width - 8, top = box.y + 44, bottom = box.y + box.height - 8;
+    obstacles.push(
+      { left: left - 10000, right: left, top: top - 10000, bottom: bottom + 10000 },
+      { left: right, right: right + 10000, top: top - 10000, bottom: bottom + 10000 },
+      { left, right, top: top - 10000, bottom: top },
+      { left, right, top: bottom, bottom: bottom + 10000 },
+    );
+  }
   if (lane) {
     const extra = 1 + (Math.max(-80, Math.min(80, lane)) + 80) / 32;
     obstacles = obstacles.map(rect => ({ ...rect, left: rect.left - extra, right: rect.right + extra, top: rect.top - extra, bottom: rect.bottom + extra }));
   }
-  if (!obstacles.length) return null;
+  return routeObstacleCurve(curve, obstacles, edge.source === edge.target);
+}
+
+// Boundary trunks include their own frames as obstacles; the ordinary node
+// router excludes those frames because its endpoints live inside them.
+export function routeObstacleCurve(curve, obstacles, self = false, { occupied = [], force = false } = {}) {
+  if (!obstacles.length && !force) return null;
   const [p0, p1, p2, p3] = curve;
   const near = obstacles.filter(rect => rect.left < Math.max(...curve.map(point => point.x)) && rect.right > Math.min(...curve.map(point => point.x)) && rect.top < Math.max(...curve.map(point => point.y)) && rect.bottom > Math.min(...curve.map(point => point.y)));
-  if (!near.length) return null;
-  let before = p0, blocked = false;
+  if (!near.length && !force) return null;
+  let before = p0, blocked = force;
   for (let i = 1; i <= 40 && !blocked; i++) {
     const t = i / 40, u = 1 - t;
     const point = { x: u ** 3 * p0.x + 3 * u ** 2 * t * p1.x + 3 * u * t ** 2 * p2.x + t ** 3 * p3.x, y: u ** 3 * p0.y + 3 * u ** 2 * t * p1.y + 3 * u * t ** 2 * p2.y + t ** 3 * p3.y };
     blocked = near.some(rect => segmentCrossesRectangle(before, point, rect)); before = point;
   }
   if (!blocked) return null;
-  const start = { x: p0.x + 18, y: p0.y }, end = { x: p3.x + (edge.source === edge.target ? 18 : -18), y: p3.y };
+  const start = { x: p0.x + 18, y: p0.y }, end = { x: p3.x + (self ? 18 : -18), y: p3.y };
   if (obstacles.some(rect => segmentCrossesRectangle(p0, start, rect) || segmentCrossesRectangle(end, p3, rect))) return null;
-  const route = detour(start, end, obstacles);
+  const route = detour(start, end, obstacles, occupied);
   if (!route) return null; // Overlapping manual boxes can leave no safe corridor.
   const points = compact([p0, ...route, p3]);
   let path = `M ${points[0].x} ${points[0].y}`;

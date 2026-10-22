@@ -108,6 +108,10 @@ export function normalizeGraph(input, options = {}) {
     const x = Number(first(position.x, raw.x));
     const y = Number(first(position.y, raw.y));
     if (Number.isFinite(x) && Number.isFinite(y) && Math.abs(x) < 100000 && Math.abs(y) < 100000) node.position = { x, y };
+    // Frame edits have their own coordinates; legacy normal-map placement must
+    // not override the grouped layout or stretch a category over its neighbours.
+    const framePosition = asRecord(raw.framePosition);
+    if (typeof framePosition.x === 'number' && typeof framePosition.y === 'number' && Number.isFinite(framePosition.x) && Number.isFinite(framePosition.y) && Math.abs(framePosition.x) < 100000 && Math.abs(framePosition.y) < 100000) node.framePosition = { x: framePosition.x, y: framePosition.y };
     return node;
   });
   const nodeIds = new Set();

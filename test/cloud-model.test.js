@@ -22,6 +22,14 @@ const sampleGraph = (count = 1) => ({
   edges: [],
 });
 
+test('cloud encoding retains independent normal and frame positions without changing membership', () => {
+  const graph=sampleGraph(); graph.nodes[0].group='Service'; graph.nodes[0].position={x:9,y:20}; graph.nodes[0].framePosition={x:100,y:-40};
+  const encoded=encodeCloudGraph(graph), decoded=decodeCloudGraphChunks(encoded).graph;
+  assert.deepEqual(decoded.nodes[0].framePosition,{x:100,y:-40});
+  assert.deepEqual(decoded.nodes[0].position,{x:9,y:20});
+  assert.equal(decoded.nodes[0].group,'Service');
+});
+
 test("cloud workspace IDs contain 128 random bits and reject malformed links", () => {
   const deterministicCrypto = {
     getRandomValues(bytes) {

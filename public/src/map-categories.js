@@ -1,7 +1,7 @@
 // Categories reuse the canonical node.group field. These bounds are presentation
 // data only; imports, checkpoints and cloud saves keep the original node IDs.
-export const CATEGORY_PADDING = 24;
-export const CATEGORY_HEADER = 54;
+export const CATEGORY_PADDING = 64;
+export const CATEGORY_HEADER = 64;
 export const CATEGORY_MIN_WIDTH = 292;
 const categoryHeaders = new WeakMap();
 
@@ -51,7 +51,7 @@ const svg = (tag, attributes = {}) => {
 
 // Reuse the mounted boundaries during dragging and filtering. Never rebuild
 // node cards or routes just to resize a container.
-export function renderCategoryContainers(layer, graph, layout, { excludedTypes = new Set(), headerLayer = null } = {}) {
+export function renderCategoryContainers(layer, graph, layout, { excludedTypes = new Set(), headerLayer = null, onDrag = null, onMove = null } = {}) {
   const existing = new Map([...layer.children].map(element => [element.dataset.category, element]));
   for (const box of categoryBounds(graph, layout.positions, layout.dimensions, excludedTypes)) {
     let group = existing.get(box.name);
@@ -73,6 +73,19 @@ export function renderCategoryContainers(layer, graph, layout, { excludedTypes =
     group.dataset.width = String(box.width);
     group.setAttribute('transform', `translate(${box.x} ${box.y})`);
     const header = categoryHeaders.get(group);
+    header.classList.toggle('is-movable', Boolean(onDrag));
+    header.setAttribute('role', onDrag ? 'button' : 'group');
+    header.setAttribute('aria-label', onDrag ? 'Move category ' + box.name + '. Drag or use arrow keys; Shift moves farther.' : 'Category ' + box.name);
+    header.querySelector('title').textContent = onDrag ? box.name + ' — drag to move all components' : box.name;
+    if (onDrag) { header.setAttribute('tabindex', '0'); header.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown ArrowLeft ArrowRight'); }
+    else { header.removeAttribute('tabindex'); header.removeAttribute('aria-keyshortcuts'); }
+    header.onpointerdown = onDrag ? event => onDrag(event, box.name) : null;
+    header.onkeydown = onMove ? event => {
+      if (event.ctrlKey || event.metaKey || event.altKey || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const step = event.shiftKey ? 40 : 10;
+      onMove(box.name, event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0, event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0);
+    } : null;
     header.setAttribute('transform', headerLayer ? `translate(${box.x} ${box.y})` : 'translate(0 0)');
     const rectangle = group.querySelector('.category-boundary');
     rectangle.setAttribute('width', box.width);
