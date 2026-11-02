@@ -81,12 +81,22 @@ function bindPromptCopy() {
   });
 }
 
+function bindNavbarScroll() {
+  const header = document.querySelector(".site-header");
+  if (!header) return;
+  const syncHeader = () => header.classList.toggle("is-scrolled", window.scrollY > 16);
+  window.addEventListener("scroll", syncHeader, { passive: true });
+  window.addEventListener("pageshow", syncHeader);
+  syncHeader();
+}
+
 function initializeLanding() {
   const redirect = getLegacyShareRedirect(window.location);
   if (redirect) {
     window.location.replace(redirect);
     return;
   }
+  bindNavbarScroll();
   mountLandingNetwork(document.querySelector("[data-landing-network]"));
   mountLandingScene(document.querySelector("[data-landing-scene]"));
   bindPromptCopy();

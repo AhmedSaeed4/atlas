@@ -71,9 +71,6 @@ svg:focus-visible { outline-color: var(--atlas-accent); }
 .brand-lockup { color: #f0f2e8; }
 .brand-mark { align-content: center; }
 .brand-mark i { background: var(--atlas-accent); box-shadow: none; }
-.eyebrow,
-.sidebar-label-row .eyebrow { color: var(--atlas-muted); }
-.sidebar .eyebrow { color: #b0b5a9; }
 .sidebar .icon-button { color: #d3d7cc; }
 .sidebar .icon-button:hover,
 .sidebar .project-row:hover { background: #ffffff12; border-color: #ffffff18; color: #fff; }
@@ -105,7 +102,6 @@ svg:focus-visible { outline-color: var(--atlas-accent); }
 .crumb-sep,
 .status-separator { color: var(--atlas-quiet); }
 .avatar-button { color: var(--atlas-foreground); background: var(--atlas-card); border-color: var(--atlas-border); }
-.page-heading .heading-copy .eyebrow { color: var(--atlas-muted); }
 h1,
 .heading-copy h1 { color: var(--atlas-foreground); font-weight: 520; }
 .heading-copy p { color: var(--atlas-muted); }
@@ -263,7 +259,6 @@ select { color: var(--atlas-foreground); }
 
 .timeline-surface { position: absolute; inset: 43px 0 0; z-index: 2; display: flex; min-width: 0; flex-direction: column; overflow: hidden; padding: 0 18px 48px; background: var(--atlas-graph-canvas); }
 .timeline-intro { display: flex; align-items: baseline; gap: 12px; min-height: 26px; }
-.timeline-kicker { color: var(--atlas-muted); font-size: 8px; font-weight: 720; letter-spacing: 1.15px; }
 .timeline-note { margin: 0; color: var(--atlas-muted); font-size: 10px; }
 .timeline-overview { display: flex; min-height: 32px; gap: 5px; overflow-x: auto; padding: 3px 0 5px; scrollbar-width: thin; }
 .timeline-step-button { flex: 0 0 auto; padding: 5px 10px; border: 1px solid var(--atlas-border); border-radius: 999px; color: var(--atlas-muted); background: var(--atlas-card); font-size: 9px; }
@@ -691,3 +686,8 @@ html[data-action-page-hidden="true"] #account-status[aria-busy="true"]::before,h
   html.sidebar-drawer-open .local-map-tip { z-index:85; }
 }
 @media(prefers-reduced-motion:reduce) { #mobile-menu, .sidebar, .sidebar.open, .sidebar-backdrop, .sidebar-backdrop.is-visible { transition:none; } }
+
+/* Context uses ordinary labels; headings carry the hierarchy. */
+.sidebar-section-label { color: #b0b5a9; font-size: 12px; font-weight: 600; }
+.context-label { display: block; margin: 0 0 6px; color: var(--atlas-muted); font-size: 12px; font-weight: 500; line-height: 1.5; letter-spacing: normal; text-transform: none; }
+.canvas-caption { font-size: 11px; font-weight: 500; letter-spacing: normal; text-transform: none; }

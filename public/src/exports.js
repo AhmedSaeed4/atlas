@@ -107,8 +107,7 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
   const categoryHeaders = categories.map(box =>
     '<g transform="translate(' + box.x + ' ' + box.y + ')">' +
     '<rect x="8" y="8" width="' + (box.width - 16) + '" height="34" rx="12" fill="var(--export-canvas)" fill-opacity=".96"/>' +
-    '<circle cx="24" cy="26" r="3" fill="' + palette.accent + '"/>' +
-    '<text x="36" y="30" font-family="system-ui,sans-serif" font-size="12" font-weight="650" fill="var(--export-foreground)">' + escapeXml(categoryTitle(box.name, box.width)) + '</text>' +
+    '<text x="22" y="30" font-family="system-ui,sans-serif" font-size="12" font-weight="650" fill="var(--export-foreground)">' + escapeXml(categoryTitle(box.name, box.width)) + '</text>' +
     '<text x="' + (box.width - 24) + '" y="30" text-anchor="end" font-family="ui-monospace,monospace" font-size="10" fill="var(--export-muted)">' + box.total + '</text></g>'
   ).join('');
   const edgeMarkup = graph.edges.map((edge, index) => {

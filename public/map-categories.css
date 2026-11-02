@@ -8,7 +8,6 @@
 .category-header.is-movable:focus { outline: none; }
 #graph.is-dragging-category, #graph.is-dragging-category .category-header.is-movable { cursor: grabbing; }
 .category-header-hit { fill: var(--atlas-graph-canvas); fill-opacity: .96; stroke: transparent; }
-.category-dot { fill: var(--atlas-accent); }
 .category-name { fill: var(--atlas-foreground); font-family: system-ui, sans-serif; font-size: 12px; font-weight: 650; }
 .category-count { fill: var(--atlas-muted); font: 10px ui-monospace, monospace; }
 .category-field .field-hint { margin: 0; font-size: 10px; line-height: 1.6; color: var(--atlas-muted); }

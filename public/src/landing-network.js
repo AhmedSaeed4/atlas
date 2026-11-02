@@ -77,7 +77,10 @@ function getLandingNetworkFrame(width, height, matrix) {
   const top = stacked ? matrix.bottom + 48 : 28;
   const right = width - 12, bottom = height - 28;
   const radius = Math.max(1, (Math.min(right - left, bottom - top) / 2 - 14) / 1.015);
-  return { cx: (left + right) / 2, cy: (top + bottom) / 2, rx: radius, ry: radius };
+  // Give a wide composition a clear right-hand anchor while retaining the
+  // same uniform, resize-only scale and safe space around the orbit.
+  const cx = stacked ? (left + right) / 2 : Math.max(left + radius, right - radius - 24);
+  return { cx, cy: (top + bottom) / 2, rx: radius, ry: radius };
 }
 function projectLandingNetworkNode(node, frame, yaw, pitch) {
   const ct = Math.cos(yaw), st = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
