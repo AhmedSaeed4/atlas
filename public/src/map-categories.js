@@ -62,8 +62,7 @@ export function renderCategoryContainers(layer, graph, layout, { excludedTypes =
       const title = svg('title');
       title.textContent = box.name;
       header.append(title, svg('rect', { class: 'category-header-hit', x: 8, y: 8, height: 34, rx: 12 }),
-        svg('circle', { class: 'category-dot', cx: 24, cy: 26, r: 3 }),
-        svg('text', { class: 'category-name', x: 36, y: 30 }),
+        svg('text', { class: 'category-name', x: 22, y: 30 }),
         svg('text', { class: 'category-count', y: 30, 'text-anchor': 'end' }));
       layer.append(group);
       categoryHeaders.set(group, header);

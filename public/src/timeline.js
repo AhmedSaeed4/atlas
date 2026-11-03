@@ -92,7 +92,6 @@ export function relationshipsForNode(graph, nodeId, perDirectionLimit = 4) {
 export function renderTimeline(graph, { onSelectNode = () => {}, selectedNodeId = null, excludedTypes = new Set(), searchTerm = "", focusedType = "" } = {}) {
   const surface = htmlNode("div", "timeline-surface");
   const intro = htmlNode("div", "timeline-intro");
-  intro.append(htmlNode("span", "timeline-kicker", "DEPENDENCY FLOW"));
   intro.append(htmlNode("p", "timeline-note", "Ordered from upstream components. Step numbers do not represent calendar dates."));
   const overview = htmlNode("nav", "timeline-overview");
   overview.setAttribute("aria-label", "Dependency steps");

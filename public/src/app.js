@@ -2671,7 +2671,7 @@ function updateProjectHeader() {
   byId("breadcrumb-project").textContent = details?.name || "No project";
   byId("project-title").textContent = details?.name || "No project selected";
   byId("project-description").textContent = opening && !project ? "" : details?.description || "Import a map or create a project to start exploring.";
-  byId("project-type").textContent = (details?.type || "SOFTWARE ARCHITECTURE").toUpperCase();
+  byId("project-type").textContent = (details?.type || "Software architecture");
   byId("node-count").textContent = (project?.graph.nodes.length || 0) + " components";
   byId("graph-count-label").textContent = (project?.graph.nodes.length || 0) + " nodes / " + (project?.graph.edges.length || 0) + " edges";
   byId("status-summary").textContent = opening ? "Opening cloud map…" : project ? "Ready to explore" : "Create a project or import a map";
@@ -4215,7 +4215,7 @@ function openNodeEditor(nodeId = null, { position = null, projectId = null, retu
   editingNodeId = node?.id || null;
   nodeEditContext = { projectId: project.id, graphRef: project.graph, nodeId: node?.id || null, nodeSnapshot: node ? JSON.stringify(node) : null, position: !node && position ? { ...position } : null };
   byId("editor-title").textContent = node ? "Edit component" : "Add component";
-  byId("editor-kicker").textContent = node ? node.type.toUpperCase() : "COMPONENT";
+  byId("editor-kicker").textContent = node ? node.type : "Component";
   byId("editor-subtitle").textContent = node ? "Update its purpose, category, or source path." : nodeEditContext.position ? "This component will be placed at the chosen canvas point when saved." : "Give this part of the system a name and a purpose.";
   byId("node-label").value = node?.label || "";
   const typeEditor = selectNodeTypeEditor(node?.type || "Service");

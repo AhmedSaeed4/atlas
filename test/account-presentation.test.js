@@ -115,8 +115,9 @@ test("landing sign-in opens the shared account panel without requiring a map or 
   assert.match(landingHtml, /id="landing-sign-in"[^>]*data-open-account/);
   assert.match(landingHtml, /id="account-modal"/);
   assert.match(landingHtml, /Continue with Google/);
-  assert.match(landingHtml, /future maps upload only if you separately enable that preference/);
-  assert.match(landingHtml, /Signing in alone does not upload maps/);
+  assert.match(landingHtml, /enable cloud saving for future maps in Settings/);
+  assert.match(landingHtml, /Signing in does not upload them/);
+  assert.match(landingHtml, /Existing local maps stay here until you move them/);
   assert.doesNotMatch(landingHtml, /Online mode uploads only the map you choose to save/);
   assert.doesNotMatch(landingHtml, /id="settings-modal"|id="save-future-maps"/);
   assert.match(landingJs, /getSharedAccountSession()/);

@@ -13,7 +13,6 @@ button:disabled { cursor: default; opacity: .55; }
 .primary { background: var(--atlas-accent); color: var(--atlas-accent-ink); border-color: transparent; }
 main { max-width: 1120px; margin: 0 auto; padding: 44px 24px; }
 .admin-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.eyebrow { margin: 0 0 10px; font-size: 10px; letter-spacing: .14em; color: var(--atlas-muted); font-weight: 650; }
 h1 { margin: 0 0 10px; font-size: 32px; letter-spacing: -.035em; }
 .admin-heading p:last-child { margin: 0; color: var(--atlas-muted); }
 .admin-status { min-height: 46px; padding: 17px 0 12px; color: var(--atlas-muted); line-height: 1.5; }
