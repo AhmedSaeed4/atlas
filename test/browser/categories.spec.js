@@ -30,11 +30,22 @@ async function seed(page, { frames = true, second = false, ungrouped = false } =
   await expect(page.locator('.view-group-card')).toHaveCount(0);
 }
 
+async function closeEditor(page, action) {
+  // A dialog becomes hidden before its queued close handlers finish. Wait for
+  // that cleanup before the test opens another edit session on the same node.
+  await page.locator('#editor-modal').evaluate(dialog => {
+    window.atlasTestEditorClosed = new Promise(resolve => {
+      dialog.addEventListener('close', () => resolve(true), { once: true });
+    });
+  });
+  await action();
+  await expect(page.locator('#editor-modal')).not.toBeVisible();
+  await page.evaluate(() => window.atlasTestEditorClosed);
+}
 async function editCategory(page, nodeId, category) {
   await page.locator(`.node-card[data-node-id="${nodeId}"]`).press('F2');
   await page.locator('#node-group').fill(category);
-  await page.getByRole('button', { name: 'Save component', exact: true }).click();
-  await expect(page.locator('#editor-modal')).not.toBeVisible();
+  await closeEditor(page, () => page.getByRole('button', { name: 'Save component', exact: true }).click());
 }
 async function storedCategory(page, id) {
   return page.evaluate(id => JSON.parse(localStorage.getItem('project-atlas-library-v1')).projects[0].graph.nodes.find(node => node.id === id).group, id);
@@ -122,7 +133,7 @@ test('create and remove a category through the editor, reuse suggestions, undo a
   await expect.poll(() => storedCategory(page, 'db')).toBe('Data & storage');
   await page.locator('.node-card[data-node-id="db"]').press('F2');
   await expect(page.locator('#node-group-options option')).toHaveCount(3);
-  await page.keyboard.press('Escape');
+  await closeEditor(page, () => page.keyboard.press('Escape'));
   await editCategory(page, 'db', 'Processing');
   await expect(page.locator('.map-category')).toHaveCount(2);
   await expect(page.locator('[data-category-header="Processing"] .category-count')).toHaveText('3');
