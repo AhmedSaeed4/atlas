@@ -84,6 +84,22 @@ Saving uses browser Web Locks, with a graph-free IndexedDB transaction fallback 
 
 Run `node --test test/storage.test.js test/local-library.test.js test/exports-share.test.js`. Browser check with fictional maps: open Alpha in two refreshed tabs, edit a node in A and confirm B's graph and Inspector update automatically without changing its zoom; edit in B and confirm A updates. Import Beta in A and verify B's sidebar gains it while keeping Alpha open. Switch maps independently and check there are no forced switches or echo saves. Keep an edit form open in B, save a change in A, then cancel B's form: its typed input must remain untouched until cancellation and the saved update must then appear. Repeat but save B's conflicting edit: confirm the notice, retained unsaved text and backup/reload protection. Delete a disposable map in one tab and check the other updates without resurrecting it. Check ordinary edits and undo/redo. Finally download SVG and PNG for forward/reverse/parallel/self connections: arrows must match the live map in both themes. Copy image uses the same SVG builder.
 
+## Loading, help and policies
+
+The home, workspace and admin pages share a small startup indicator. It appears only if the page takes more than 160ms to initialize, then fades away over 200ms when that page's controls are ready. Fast loads skip it; reduced motion removes it immediately. Optional account and cloud-map loading keep their own states and do not hold the whole page behind this indicator. After a startup error or ten-second delay, **Retry**, **Continue to page** and **Help** are available. Retry reloads the same address without clearing browser data. Continue reveals whatever loaded successfully; it cannot repair a failed script. The indicator requires the initial HTML and bootstrap assets to arrive and does not replace the browser's network-error page.
+
+Open `/help` for the practical guide to importing, navigation, category frames, local/cloud storage, backups, device checkpoints, sharing and troubleshooting. `/privacy` describes the actual storage, providers, sharing and deletion choices; `/terms` describes the free service and its use. These are independent static pages and remain readable without JavaScript or cloud sign-in. Home, workspace and admin link to them. Workspace links open in another tab to preserve the current map. Their theme uses the existing local preference.
+
+The policy pages identify Ahmed in Pakistan and the operator-provided support/privacy address. Review their wording before publication, and update it when storage, providers or service practices change; the text is not a certification of legal compliance. No OAuth branding, provider configuration or account-deletion backend is changed by adding these pages. Account or personal-data deletion requests use the published contact; deleting a map or signing out does not delete the authentication account.
+
+Run the focused startup/support checks with:
+
+```sh
+npx playwright test test/browser/startup.spec.js test/browser/support-pages.spec.js
+```
+
+These checks delay or fail local scripts in isolated contexts, cover reduced motion, retry/data preservation, readable no-JavaScript pages, route redirects and absence of remote assets on the support pages. Full regressions remain `npm test` and `npm run test:browser`. For manual review, open the pages at desktop and phone widths in both themes, follow their contents/footer links, and use browser network throttling to observe the startup fade. Use disposable data; no real account or production-provider verification is implied by the isolated checks.
+
 ## Build a map
 
 Choose **Copy agent prompt** on the landing page or in the workspace and paste it into a coding agent that is already working in the target repository. Unless your instructions already name both a delivery mode and output folder, the prompt asks for those choices before repository inspection or file creation. It recommends an explicit dedicated folder outside the source repository and resolves relative paths only against a base you named. Both modes inspect the repository read-only, ground claims in evidence, avoid secret values, and keep generated files in the agreed folder.

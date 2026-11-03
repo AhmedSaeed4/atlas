@@ -1,4 +1,7 @@
 /* Workspace review features use the existing Atlas palette and modal geometry. */
+.workspace-support-links { display: flex; gap: 18px; padding: 8px 8px 0; }
+.workspace-support-links a { font-size: 11px; color: #b0b5a9; text-decoration: none; }
+.workspace-support-links a:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .local-backup-actions {
   display: block;
 }
