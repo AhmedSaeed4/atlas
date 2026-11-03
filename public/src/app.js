@@ -6133,3 +6133,4 @@ function init() {
 init();
 localSyncReady = true;
 scheduleLocalLibrarySync();
+window.AtlasStartup?.ready();

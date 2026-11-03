@@ -1,0 +1,26 @@
+.page-startup {
+  position: fixed; inset: 0; z-index: 200; display: grid; place-items: center;
+  padding: 24px; color: var(--atlas-foreground, #f0f2e8); background: var(--atlas-canvas, #171916);
+  font: 13px/1.6 Arial, "Helvetica Neue", Helvetica, sans-serif;
+  opacity: 1; transition: opacity 200ms ease;
+}
+.page-startup[hidden] { display: none; }
+html[data-theme="light"] .page-startup { color: var(--atlas-foreground, #242721); background: var(--atlas-canvas, #dedfd7); }
+.page-startup.is-leaving { opacity: 0; pointer-events: none; }
+.startup-content { display: grid; justify-items: center; gap: 22px; max-width: 340px; text-align: center; }
+.startup-mark { width: 24px; height: 24px; display: grid; grid-template: repeat(2, 8px) / repeat(2, 8px); gap: 3px; align-content: center; transform: rotate(-8deg); }
+.startup-mark i { border-radius: 3px; background: var(--atlas-accent, #deef52); }
+.startup-mark i:nth-child(2), .startup-mark i:nth-child(3) { opacity: .62; }
+.startup-message { margin: 0; color: var(--atlas-muted, #adb3a6); }
+.startup-track { width: 84px; height: 2px; overflow: hidden; background: var(--atlas-border, #41483b); border-radius: 2px; }
+.startup-track i { display: block; width: 32px; height: 100%; background: var(--atlas-accent, #deef52); animation: startup-progress 1.2s ease-in-out infinite; }
+.startup-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; }
+.startup-actions[hidden] { display: none; }
+.startup-actions button, .startup-actions a { padding: 8px 14px; border: 1px solid var(--atlas-border, #41483b); border-radius: 999px; color: inherit; background: transparent; text-decoration: none; font: inherit; cursor: pointer; }
+.startup-actions button:focus-visible, .startup-actions a:focus-visible { outline: 2px solid var(--atlas-accent, #deef52); outline-offset: 3px; }
+.page-startup.has-error .startup-track { display: none; }
+@keyframes startup-progress { from { transform: translateX(-32px); } to { transform: translateX(84px); } }
+@media (prefers-reduced-motion: reduce) {
+  .page-startup { transition: none; }
+  .startup-track i { animation: none; width: 100%; opacity: .6; }
+}

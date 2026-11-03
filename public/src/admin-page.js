@@ -82,4 +82,5 @@ for (const [id, action, text] of [["admin-sign-in", "signIn", "Signing in…"], 
   });
 }
 void controller.start();
+window.AtlasStartup?.ready();
 window.addEventListener("pagehide", () => { pickers.forEach(picker => picker.dispose()); controller.dispose(); }, { once: true });

@@ -102,6 +102,7 @@ function initializeLanding() {
   bindPromptCopy();
   const account = getSharedAccountSession();
   initAccountPanel({ root: document, account });
+  window.AtlasStartup?.ready();
 }
 
 if (typeof window !== "undefined" && typeof document !== "undefined") initializeLanding();

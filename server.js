@@ -26,11 +26,12 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(400).end("Bad request");
     return;
   }
-  if (pathname === "/workspace/" || pathname === "/admin/") {
+  const pages = ["/workspace", "/admin", "/help", "/privacy", "/terms"];
+  if (pages.some(page => pathname === page + "/")) {
     response.writeHead(308, { Location: pathname.slice(0, -1) + requestUrl.search }).end();
     return;
   }
-  const pagePath = ["/workspace", "/admin"].includes(pathname) ? pathname + ".html" : pathname;
+  const pagePath = pages.includes(pathname) ? pathname + ".html" : pathname;
   const relative = path.normalize(pagePath.replace(/^[/\\]+/, ""));
   let target = path.resolve(publicRoot, relative || "index.html");
   if (target !== publicRoot && !target.startsWith(publicRoot + path.sep)) {
