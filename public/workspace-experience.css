@@ -470,3 +470,33 @@
     flex: 1 1 80%;
   }
 }
+
+/* Phone details leave most of the map available for navigation. */
+@media (max-width: 560px) {
+  #expand-inspector { display: inline-grid; }
+  html.compact-inspector:not(.graph-fullscreen) .inspector,
+  html.graph-fullscreen .inspector {
+    top: auto;
+    right: 20px;
+    left: 20px;
+    bottom: 56px;
+    width: auto;
+    height: min(260px, 42%);
+    max-height: 42%;
+    min-height: 0;
+    transform: translateY(14px);
+  }
+  html.compact-inspector.graph-inspector-open:not(.graph-fullscreen) .inspector,
+  html.graph-fullscreen.graph-inspector-open .inspector { transform: none; }
+  html.compact-inspector.graph-inspector-wide:not(.graph-fullscreen) .inspector,
+  html.graph-fullscreen.graph-inspector-wide .inspector {
+    height: min(520px, 78%);
+    max-height: 78%;
+  }
+  html.compact-inspector .inspector-head,
+  html.graph-fullscreen .inspector-head { flex: 0 0 auto; padding: 8px 12px; }
+  html.compact-inspector .inspector-content,
+  html.graph-fullscreen .inspector-content { overscroll-behavior: contain; }
+  html.compact-inspector .inspector-footer,
+  html.graph-fullscreen .inspector-footer { flex: 0 0 auto; padding: 7px 12px; }
+}

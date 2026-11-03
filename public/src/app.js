@@ -31,6 +31,7 @@ import { createShareUrl, decodeShareHash, findSharedProject, isLocalShareHost, s
 import { addOrReuseExampleProject, clearLocalDataRoute, clearRejectedShareRoute, consumeFlowExampleQuery, createRevisionGate, createShareLoadTracker, fitScaleForBounds, isFlowExampleRoute, shareFailureContext, readImportSource, removeProjectSnapshot, shouldSaveOnEnter } from "./controller-utils.js";
 import { INSPECTOR_DEFAULT_WIDTH, clampInspectorWidth, inspectorWidthLimits, isNamedLinkSnapshotCurrent, namedLinkPayload, readInspectorExpanded, readInspectorWidthPreference, writeInspectorExpanded, writeInspectorWidth, writeNamedLinkClipboard } from "./refinement-ui.js";
 import { branchEdgeCandidate, canStartPointerGesture, connectionPreviewPath, nodeContextIsCurrent, screenToWorld } from "./refinement-graph.js";
+import { bindGraphTouch } from "./graph-touch.js";
 import { isCurrentTouchEdgeSelection, isTouchClick, scrollTypeFiltersWithWheel, transitionTypeInteractions } from "./filter-interaction.js";
 import { workspaceGraphPresentation, workspaceLoadingPresentation } from "./workspace-loading.js";
 import { createWorkspaceNavigation } from "./workspace-navigation.js";
@@ -136,6 +137,7 @@ let localSyncReady = false;
 let localSyncScheduled = false;
 let localSyncAfterWrite = false;
 let transform = { x: 0, y: 0, scale: 1 };
+let graphTouch = null;
 let viewMode = "graph";
 const CLOUD_ASSOCIATIONS_KEY = "atlas.online.associations.v1";
 const onlineStorage = (() => { try { return window.localStorage; } catch { return null; } })();
@@ -506,7 +508,11 @@ function refreshFullscreenInspector(hasDetails) {
   expandButton.setAttribute("aria-label", label);
   expandButton.title = label;
   expandButton.setAttribute("aria-expanded", String(fullscreenInspectorExpanded));
-  expandButton.disabled = !fullscreenInspectorExpanded && inspectorWorkspaceWidth() <= 380;
+  expandButton.disabled = !fullscreenInspectorExpanded && inspectorWorkspaceWidth() <= 380 && !matchMedia('(max-width: 560px)').matches;
+  if (matchMedia('(max-width: 560px)').matches) {
+    expandButton.setAttribute('aria-label', fullscreenInspectorExpanded ? 'Collapse details' : 'Expand details');
+    expandButton.title = fullscreenInspectorExpanded ? 'Collapse details' : 'Expand details';
+  }
 }
 function applyInspectorWidth(value, { persist = false, expanded = false } = {}) {
   const workspace = document.querySelector(".graph-workspace");
@@ -2562,7 +2568,7 @@ function scheduleLocalLibrarySync() {
 }
 function synchronizeLocalTabs() {
   const result = localLibrary.synchronize(projects, {
-    defer: Boolean(dragState || inspectorResizePointer !== null || document.querySelector("dialog[open]")),
+    defer: Boolean(dragState || graphTouch?.isActive() || inspectorResizePointer !== null || document.querySelector("dialog[open]")),
   });
   if (result.status !== "updated") return;
   const previous = projects;
@@ -3745,6 +3751,7 @@ function cancelActiveConnection() {
   try { byId("graph").releasePointerCapture(pointerId); } catch {}
 }
 function cancelActiveGesture() {
+  graphTouch?.cancel();
   dragPaint.cancel();
   categoryDragPaint.cancel();
   const state = dragState;
@@ -5620,6 +5627,13 @@ function attachEvents() {
 
   const graphSvg = byId("graph");
   const graphStage = byId("graph-stage");
+  const hintParts = graphStage.querySelectorAll('.canvas-help span');
+  const updateGestureHint = touch => {
+    hintParts[1].textContent = touch ? 'Pinch to zoom' : 'Scroll to zoom';
+    hintParts[2].textContent = touch ? 'Tap a card for details' : 'Drag a card to move';
+  };
+  updateGestureHint(matchMedia('(pointer: coarse)').matches);
+  graphSvg.addEventListener('pointerdown', event => updateGestureHint(event.pointerType === 'touch'), true);
   const preventGraphNativeSelection = (event) => event.preventDefault();
   graphSvg.addEventListener("selectstart", preventGraphNativeSelection, true);
   graphSvg.addEventListener("dragstart", preventGraphNativeSelection);
@@ -5665,6 +5679,17 @@ function attachEvents() {
   });
   document.addEventListener("pointerdown", (event) => { if (!event.target.closest?.("#graph-context-menu")) hideGraphContextMenu(); });
   graphSvg.addEventListener("pointerdown", startPan);
+  graphTouch = bindGraphTouch(graphSvg, {
+    readCamera: () => transform,
+    writeCamera: value => { transform = value; setViewportTransform(); },
+    onStart: () => { cancelActiveGesture(); stopFitAnimation(); hideGraphContextMenu(); },
+    scope: () => viewMode === 'graph' ? currentGraph() : null,
+    onEmptyTap: () => {
+      selectedNodeId = null; selectedEdgeId = null; touchSelectedEdge = null;
+      if (focusedType || lockedType) applyTypeInteraction({ kind: 'clear-highlight' });
+      renderInspector(); refreshTraceStyles(); refreshEdgeSelection();
+    },
+  });
   graphSvg.addEventListener("pointermove", movePointer);
   graphSvg.addEventListener("pointerup", endPointer);
   graphSvg.addEventListener("pointercancel", endPointer);
@@ -5676,6 +5701,7 @@ function attachEvents() {
   document.addEventListener("pointercancel", scheduleLocalLibrarySync);
   graphSvg.addEventListener("lostpointercapture", scheduleLocalLibrarySync);
   graphSvg.addEventListener("wheel", (event) => {
+    updateGestureHint(false);
     event.preventDefault();
     const rect = byId("graph-stage").getBoundingClientRect();
     zoomAt(transform.scale * (event.deltaY < 0 ? 1.1 : 1 / 1.1), event.clientX - rect.left, event.clientY - rect.top);

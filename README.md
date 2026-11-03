@@ -6,6 +6,10 @@ The landing page, workspace (including shared viewers), and admin page use `publ
 
 ## Run locally
 
+Map touch controls: drag with one finger to pan, including when starting over a component or connection. Pinch with two fingers to zoom around their midpoint. Tap a component for details; tap empty map space or Close to dismiss them. On phones up to 560px wide, details use a short bottom panel; its expand button offers more reading space. The map keeps its size and camera. Mouse/keyboard component editing and mouse-wheel zoom remain available; touch navigation does not move saved component positions. The rest of the page still scrolls normally outside the map.
+
+Touch regression checks: `node --test test/graph-touch.test.js` and `npx playwright test test/browser/mobile-map.spec.js`. The latter generates real Chromium touch input (including two simultaneous fingers), uses disposable maps and checks navigation, cancellation, shared snapshots and both-theme phone/fullscreen details. Test on physical phones as well before release; Chromium emulation does not establish Safari/device behavior.
+
 Use Node.js 18 or newer to serve the checked-in static files. The optional Firebase client is bundled locally; rebuilding it requires the development dependencies.
 
 ```sh
