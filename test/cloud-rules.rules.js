@@ -25,6 +25,8 @@ import {
 } from "firebase/firestore";
 
 import { createCloudService, createFirebaseAdapter } from "../public/src/cloud-service.js";
+import { createFirebaseDeletionStore } from '../server/deletion-firebase.js';
+import { createDeletionEngine } from '../server/account-deletion.js';
 import { encodeCloudGraph } from "../public/src/cloud-model.js";
 import { createMapAdmissionController } from "../public/src/map-admission.js";
 import { commitManualMoveAssociation, hasUnresolvedLocalCloudCandidate, reusableManualMoveAttempt } from "../public/src/sidebar-library.js";
@@ -65,6 +67,45 @@ function graphJson(name = "Eight chunk graph") {
   });
   return base + " ".repeat(TWO_MIB - Buffer.byteLength(base, "utf8"));
 }
+
+test('account deletion lock blocks stale clients and sharing; trusted REST cleanup removes historical subcollections and account records', async () => {
+  const uid = 'deletion-owner', { database } = await createWorkspace(uid);
+  await updateDoc(workspaceRef(database), { shared: true, updatedAt: serverTimestamp() });
+  const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1,0,1]), hash: 'SHA-256' }, true, ['sign','verify']);
+  const pem = '-----BEGIN PRIVATE KEY-----\n' + Buffer.from(await crypto.subtle.exportKey('pkcs8', pair.privateKey)).toString('base64') + '\n-----END PRIVATE KEY-----';
+  const account = { project_id: PROJECT_ID, client_email: 'disposable-emulator@example.test', private_key: pem };
+  let authRemoved = false;
+  const transport = async (url, options) => {
+    if (url.startsWith('https://oauth2.googleapis.com/')) return Response.json({ access_token: 'owner' });
+    if (url.startsWith('https://identitytoolkit.googleapis.com/')) { authRemoved = true;return Response.json({}); }
+    assert.ok(url.startsWith('https://firestore.googleapis.com/v1/'));
+    try { return await fetch(url.replace('https://firestore.googleapis.com', 'http://' + emulatedAddress), { ...options, headers: { ...options.headers, Authorization: 'Bearer owner' } }); }
+    catch (error) { throw new Error('Emulator REST failed at ' + options.method + ' ' + new URL(url).pathname, { cause: error }); }
+  };
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(chunkRef(db, WORKSPACE_ID, REVISION_STALE, 0), { index: 0, payload: Bytes.fromUint8Array(new Uint8Array([1])) });
+    await setDoc(doc(db, 'accountProfiles', uid), { uid });
+    await setDoc(doc(db, 'accountLimits', uid), { maxWorkspaces: 20 });
+  });
+  const store = createFirebaseDeletionStore({}, account, transport);
+  let time = Date.now();const engine = createDeletionEngine(store, { now: () => time });
+  const receipt = await engine.begin({ uid, authTime: time / 1000 });
+  await assertFails(updateDoc(workspaceRef(database), { name: 'stale edit', updatedAt: serverTimestamp() }));
+  await assertFails(getDoc(workspaceRef(env.unauthenticatedContext().firestore())));
+  await assertFails(getDoc(chunkRef(env.unauthenticatedContext().firestore(), WORKSPACE_ID, REVISION_A, 0)));
+  await assertFails(setDoc(doc(database, 'accountProfiles', uid), { uid }));
+  await assertFails(deleteDoc(doc(database, 'accountDeletions', uid)));
+  for (let step = 0; step < 25; step++) { if ((await engine.step(uid, receipt.nonce)).status === 'complete') break; }
+  assert.equal(authRemoved, true);
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    for (const path of [['workspaces',WORKSPACE_ID],['accountProfiles',uid],['accountLimits',uid],['workspaceQuota',uid]]) assert.equal((await getDoc(doc(db,...path))).exists(), false);
+    assert.equal((await getDoc(chunkRef(db,WORKSPACE_ID,REVISION_STALE,0))).exists(), false);
+    assert.equal((await getDoc(doc(db,'accountDeletions',uid))).exists(), true);
+  });
+  time += 71 * 60000;await engine.step(uid, receipt.nonce);assert.equal(await store.job(uid), null);
+});
 
 function splitFixed(json, count = 8) {
   const width = Buffer.byteLength(json, "utf8") / count;

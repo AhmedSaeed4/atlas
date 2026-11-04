@@ -1,5 +1,6 @@
 import { startButtonProgress } from "./action-feedback.js";
 import { bindDialogBackdropClose } from "./dialog-dismissal.js";
+import { initAccountDeletion } from "./account-deletion.js";
 const byId = (root, id) => root?.getElementById?.(id) || root?.querySelector?.(`#${id}`) || null;
 
 export function getAccountPresentation(state = {}) {
@@ -70,12 +71,12 @@ function bindDialogDismissal({ dialog, closeButtons, triggers }) {
   }
   bindDialogBackdropClose(dialog, () => dialogClose(dialog, triggers));
   dialog.addEventListener("close", () => {
-    for (const trigger of triggers) trigger.setAttribute("aria-expanded", "false");
+    for (const trigger of triggers) trigger.setAttribute("aria-expanded", String(Boolean(dialog.open)));
   });
 }
 
 
-export function initAccountPanel({ root = document, account, startProgress = startButtonProgress } = {}) {
+export function initAccountPanel({ root = document, account, startProgress = startButtonProgress, initDeletion = initAccountDeletion } = {}) {
   const dialog = byId(root, "account-modal");
   const triggers = Array.from(root.querySelectorAll?.("[data-open-account]") || []);
   const status = byId(root, "account-status");
@@ -219,10 +220,11 @@ export function initAccountPanel({ root = document, account, startProgress = sta
     render(state);
   });
   render(lastState);
+  const disposeDeletion = initDeletion({ root, account });
   // Both the landing page and workspace use this panel. Restore without opening
   // it; first-time local visitors still do not load the Firebase service.
   if (typeof account.restore === "function") void account.restore().catch(() => {});
-  return () => { adminLinkEpoch += 1; if (typeof unsubscribe === "function") unsubscribe(); };
+  return () => { disposeDeletion(); adminLinkEpoch += 1; if (typeof unsubscribe === "function") unsubscribe(); };
 }
 
 export function initSettingsPanel({ root = document, account } = {}) {

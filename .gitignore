@@ -6,6 +6,9 @@ dist/
 *.log
 .env
 .env.*
+.dev.vars
+.dev.vars.*
+.wrangler/
 !.env.example
 *.pem
 *.key
