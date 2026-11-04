@@ -1,6 +1,7 @@
 :root,
 html[data-theme="dark"] {
   color-scheme: dark;
+  --atlas-font-sans: Arial, "Helvetica Neue", Helvetica, sans-serif;
   --atlas-canvas: #171916;
   --atlas-graph-canvas: #171916;
   --atlas-card: #252823;

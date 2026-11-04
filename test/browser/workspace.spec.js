@@ -116,7 +116,7 @@ test("full screen shares the latest pan and zoom in both directions across resiz
   await page.keyboard.press("Escape");
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   sameFocus(await camera(page), linked);
-  await page.getByRole("button", { name: /^B Beta Software project/ }).click();
+  await page.getByRole("button", { name: /^B Beta 3 components/ }).click();
   const beta = await camera(page);
   await fullscreen(page);
   sameFocus(await camera(page), beta);
@@ -206,7 +206,7 @@ test("each local tab restores its own map and description edits preserve camera"
   const second = await context.newPage();
   await second.goto("/workspace");
   await second
-    .getByRole("button", { name: /^B Beta Software project/ })
+    .getByRole("button", { name: /^B Beta 3 components/ })
     .click();
   await page.reload();
   await expect(page.locator("#project-title")).toHaveText("Alpha");

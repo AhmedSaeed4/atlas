@@ -7,6 +7,7 @@ import { nodeMatchesQuery, projectCollapsedGroups } from "./graph-exploration.js
 import { initComponentFinder, initExplorationControls } from "./component-finder.js";
 import { LIBRARY_PREFERENCES_KEY, createLibraryPreferences, filterWorkspaceLibrary, editedLabel } from "./workspace-library-view.js";
 import { initWorkspaceGuide } from "./workspace-guide.js";
+import { initWorkspaceShell } from "./workspace-shell.js";
 import { initMapVersionTools } from "./map-version-tools.js";
 import { bindDialogBackdropClose } from "./dialog-dismissal.js";
 import { resizeGraphCamera } from "./graph-camera.js";
@@ -1581,8 +1582,22 @@ function makeLibraryRow({ origin, id, ownerUid = "", name, type, count, details,
   const nameLabel=plain("span", "project-name", name || "Untitled map");
   if(pinned){const star=plain("span","project-pin-mark","★ ");star.setAttribute("aria-hidden","true");nameLabel.prepend(star);}
   nameWrap.append(nameLabel);
-  nameWrap.append(plain("span", "project-meta", type || details || (origin === "cloud" ? "Cloud Workspace" : "Software project")));
-  const edited=editedLabel(updatedAt);if(edited)nameWrap.append(plain("span","project-updated",edited));
+  const edited = editedLabel(updatedAt);
+  const summary = count == null ? (type || details || "") : String(count) + (Number(count) === 1 ? " component" : " components");
+  if (summary || edited) {
+    const meta = plain("span", "project-meta");
+    meta.title = [summary, type || details, edited].filter(Boolean).join("\n");
+    if (summary) meta.append(plain("span", "project-summary", summary));
+    if (edited) {
+      const modified = plain("time", "project-updated", editedLabel(updatedAt, Date.now(), {compact: true}));
+      const time = typeof updatedAt === "number" ? updatedAt : Date.parse(updatedAt);
+      modified.dateTime = new Date(time).toISOString();
+      modified.title = edited + " - " + new Date(time).toLocaleString();
+      modified.setAttribute("aria-label", edited);
+      meta.append(modified);
+    }
+    nameWrap.append(meta);
+  }
   openButton.title=(name||"Untitled map")+(pinned?" · pinned":"")+(edited?" · "+edited:"");
   openButton.append(nameWrap, plain("span", "project-count", String(count ?? "")));
   openButton.addEventListener("click", (event) => { event.stopPropagation(); open(); sidebarDrawer.setOpen(false, { restoreFocus: true }); });
@@ -3023,7 +3038,7 @@ function renderGraph() {
       outputPort.addEventListener("pointerdown", (event) => startPortDrag(event, node.id));
       inputPort.addEventListener("pointerenter", () => { if (dragState?.kind === "connection") updatePortPreview(dragState.lastEvent); });
       group.append(inputPort, outputPort);
-      cardText(group, node.viewGroup ? 'CATEGORY' : node.type.toUpperCase(), 14, 21, "card-type", 24);
+      cardText(group, node.viewGroup ? 'Category' : node.type, 14, 21, "card-type", 24);
       group.append(svgElement("circle", { class: "card-icon-bg", cx: size.width - 16, cy: 15, r: 7 }));
       group.append(svgElement("path", { class: "card-icon-glyph", d: "M 186 12.5 L 190 15 L 186 17.5 M 186.5 12.5 L 184.5 12.5 M 186.5 17.5 L 184.5 17.5" }));
       group.append(svgElement("circle", { class: "card-icon-node", cx: 184, cy: 12.5, r: 1.2 }));
@@ -6079,6 +6094,7 @@ function initWorkspaceSafety() {
 }
 
 function init() {
+  initWorkspaceShell();
   initWorkspaceSafety();
   initExploration();
   initMapVersions();
