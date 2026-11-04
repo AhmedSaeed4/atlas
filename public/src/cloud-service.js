@@ -6,6 +6,7 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged as firebaseOnAuthStateChanged,
   signInWithPopup,
+  reauthenticateWithPopup,
   signOut as firebaseSignOut,
 } from "firebase/auth";
 import {
@@ -457,6 +458,14 @@ export function createFirebaseAdapter(config, {
     signOut: async () => {
       await persistenceReady;
       return firebaseSignOut(auth);
+    },
+    prepareAccountDeletion: async (uid) => {
+      await authSessionReady(uid);
+      const user = auth.currentUser;
+      if (!user || user.uid !== uid) throw new CloudServiceError('Your account changed.', 'account-changed');
+      await reauthenticateWithPopup(user, new GoogleAuthProvider());
+      if (auth.currentUser !== user || auth.currentUser.uid !== uid) throw new CloudServiceError('Your account changed.', 'account-changed');
+      return user.getIdToken(true);
     },
     listWorkspaces: async (uid) => {
       await authSessionReady(uid);
@@ -1039,6 +1048,10 @@ export function createCloudService({
         ))
         : [];
       return Object.freeze({ status: "ready", workspaces });
+    }),
+    prepareAccountDeletion: expectedUid => withSession(({ uid }) => {
+      if (uid !== expectedUid) throw new CloudServiceError('Your account changed.', 'account-changed');
+      return adapter.prepareAccountDeletion(uid);
     }),
     getAdminAccess: () => withSession(({ uid }) => adapter.getAdminAccess(uid)),
     listAdminAccounts: ({ afterUid = "" } = {}) => withSession(({ uid }) => adapter.listAdminAccounts(uid, afterUid)),

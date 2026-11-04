@@ -13,6 +13,18 @@ const mimeTypes = new Map([
   [".png", "image/png"],
 ]);
 const server = http.createServer(async (request, response) => {
+  // Explicit loopback-only fictional preview; dev/ is never deployed as public/.
+  if (process.env.ATLAS_DELETION_PREVIEW === 'true' && ['127.0.0.1', 'localhost', '::1'].includes(process.env.HOST || '127.0.0.1')) {
+    const previewPath = (request.url || '').split('?')[0];
+    const previewFile = { '/account-deletion-preview': 'account-deletion-preview.html', '/deletion-preview.js': 'deletion-preview.js' }[previewPath];
+    if (previewFile && request.method === 'GET') {
+      const data = await readFile(path.resolve(publicRoot, '../dev', previewFile));
+      response.writeHead(200, { 'Content-Type': previewFile.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }).end(data);return;
+    }
+  }
+  if (request.method === 'POST' && request.url === '/api/account-deletion') {
+    response.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ code: 'not-configured' }));return;
+  }
   if (!["GET", "HEAD"].includes(request.method || "")) {
     response.writeHead(405, { Allow: "GET, HEAD" }).end("Method not allowed");
     return;

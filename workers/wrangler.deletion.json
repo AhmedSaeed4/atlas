@@ -1,0 +1,8 @@
+{
+  "name": "atlas-account-deletion-recovery",
+  "main": "account-deletion-recovery.js",
+  "compatibility_date": "2026-11-04",
+  "workers_dev": false,
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": { "ACCOUNT_DELETION_ENABLED": "false" }
+}

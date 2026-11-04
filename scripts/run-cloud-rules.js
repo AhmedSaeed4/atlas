@@ -37,7 +37,7 @@ const firebase = spawn(process.execPath, [
   "firestore",
   "--project",
   projectId,
-  "node --test test/cloud-rules.rules.js",
+  process.argv.includes('--deletion-only') ? 'node --test --test-name-pattern="account deletion" test/cloud-rules.rules.js' : "node --test test/cloud-rules.rules.js",
 ], {
   cwd: root,
   env: environment,
