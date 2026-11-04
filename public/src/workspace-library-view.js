@@ -89,10 +89,19 @@ export function filterWorkspaceLibrary(
     )
     .map(({ item }) => item);
 }
-export function editedLabel(value, now = Date.now()) {
+export function editedLabel(value, now = Date.now(), { compact = false } = {}) {
   const time = typeof value === "number" ? value : Date.parse(value);
-  if (!Number.isFinite(time) || time <= 0) return "";
+  if (!Number.isFinite(time) || time <= 0 || !Number.isFinite(new Date(time).getTime())) return "";
   const days = Math.max(0, Math.floor((now - time) / 86400000));
+  if (compact) {
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 30) return days + 'd ago';
+    return new Date(time).toLocaleDateString(undefined, {
+      month: 'short', day: 'numeric',
+      ...(new Date(time).getFullYear() !== new Date(now).getFullYear() ? {year: 'numeric'} : {}),
+    });
+  }
   return days === 0
     ? "Edited today"
     : days === 1

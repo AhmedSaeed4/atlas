@@ -26,7 +26,10 @@ async function seed(page, { frames = true, second = false, ungrouped = false } =
   await page.goto('/workspace');
   await expect(page.locator('.node-card')).toHaveCount(5);
   await expect(page.locator('#category-frames-toggle')).toHaveAttribute('aria-pressed', 'false');
-  if (frames) await page.locator('#category-frames-toggle').click();
+  if (frames) {
+    if (await page.locator('#workspace-tools-toggle').isVisible()) await page.locator('#workspace-tools-toggle').click();
+    await page.locator('#category-frames-toggle').click();
+  }
   await expect(page.locator('.view-group-card')).toHaveCount(0);
 }
 
@@ -223,8 +226,10 @@ for (const theme of ['dark', 'light']) test(`${theme} category headers remain us
   await seed(page);
   await page.evaluate(theme => document.documentElement.setAttribute('data-theme', theme), theme);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.locator('#workspace-tools-toggle').click();
   await page.locator('#category-frames-toggle').press('Space');
   await expect(page.locator('.map-category')).toHaveCount(0);
+  await page.locator('#workspace-tools-toggle').click();
   await page.locator('#category-frames-toggle').press('Space');
   await expect(page.locator('.map-category')).toHaveCount(2);
   await expect(page.locator('.node-card')).toHaveCount(5);
@@ -300,8 +305,9 @@ test('category header drags all members with stable spacing and camera, one Undo
   const after = await nodePoints(page);
   const dx = after.web.x - before.web.x, dy = after.web.y - before.web.y;
   expect(dx).not.toBe(0); expect(dy).not.toBe(0);
-  expect(after.mobile.x - before.mobile.x).toBeCloseTo(dx, 5);
-  expect(after.mobile.y - before.mobile.y).toBeCloseTo(dy, 5);
+  // DOM SVG transforms are float32; keep tolerance below a ten-thousandth of a world pixel.
+  expect(after.mobile.x - before.mobile.x).toBeCloseTo(dx, 4);
+  expect(after.mobile.y - before.mobile.y).toBeCloseTo(dy, 4);
   for (const id of ['api', 'worker', 'db']) expect(after[id]).toEqual(before[id]);
   expect(await page.locator('#viewport').getAttribute('transform')).toBe(camera);
   expect(await page.evaluate(() => window.movedCategoryCard === document.querySelector('[data-node-id="web"]'))).toBe(true);

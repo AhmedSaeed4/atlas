@@ -58,7 +58,7 @@ function chartMarkup(chart, x = 15, y = 86) {
       : (index) => geometry.points[index].x;
     chart.categories.forEach((category, index) => {
       const visibleLabel = chartCompactReadout(chart, index, geometry.width / chart.values.length, 6);
-      parts.push('<text x="' + xFor(index) + '" y="54" text-anchor="middle" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="6"><title>' + escapeXml(chartValueLabel(chart, index)) + '</title>' + escapeXml(visibleLabel) + '</text>');
+      parts.push('<text x="' + xFor(index) + '" y="54" text-anchor="middle" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="6"><title>' + escapeXml(chartValueLabel(chart, index)) + '</title>' + escapeXml(visibleLabel) + '</text>');
     });
   }
   parts.push('</g>');
@@ -93,7 +93,7 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
     const width = wire.label?.length * 5.3 + 18;
     const label = wire.kind === 'trunk' && wire.label
       ? '<rect x="' + (geometry.labelX - width / 2) + '" y="' + (geometry.labelY - 10) + '" width="' + width + '" height="17" rx="8" fill="var(--export-card)" stroke="var(--export-border)"/>' +
-        '<text x="' + geometry.labelX + '" y="' + (geometry.labelY + 2) + '" text-anchor="middle" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="9">' + escapeXml(wire.label) + '</text>' : '';
+        '<text x="' + geometry.labelX + '" y="' + (geometry.labelY + 2) + '" text-anchor="middle" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="9">' + escapeXml(wire.label) + '</text>' : '';
     const relationships = wire.edgeIndexes.map(index => {
       const edge = graph.edges[index]; return edge.source + ' → ' + edge.target + ': ' + (edge.label || edge.type || 'connects');
     }).join('; ');
@@ -107,7 +107,7 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
   const categoryHeaders = categories.map(box =>
     '<g transform="translate(' + box.x + ' ' + box.y + ')">' +
     '<rect x="8" y="8" width="' + (box.width - 16) + '" height="34" rx="12" fill="var(--export-canvas)" fill-opacity=".96"/>' +
-    '<text x="22" y="30" font-family="system-ui,sans-serif" font-size="12" font-weight="650" fill="var(--export-foreground)">' + escapeXml(categoryTitle(box.name, box.width)) + '</text>' +
+    '<text x="22" y="30" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="12" font-weight="600" fill="var(--export-foreground)">' + escapeXml(categoryTitle(box.name, box.width)) + '</text>' +
     '<text x="' + (box.width - 24) + '" y="30" text-anchor="end" font-family="ui-monospace,monospace" font-size="10" fill="var(--export-muted)">' + box.total + '</text></g>'
   ).join('');
   const edgeMarkup = graph.edges.map((edge, index) => {
@@ -119,7 +119,7 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
     const targetName = graph.nodes.find((node) => node.id === edge.target)?.label || edge.target;
     const labelMarkup = hasLabel
       ? '<rect x="' + (geometry.labelX - geometry.labelWidth / 2) + '" y="' + (geometry.labelY - 10) + '" width="' + geometry.labelWidth + '" height="17" rx="8" fill="var(--export-card)" stroke="var(--export-border)"/>' +
-        '<text x="' + geometry.labelX + '" y="' + (geometry.labelY + 2) + '" text-anchor="middle" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="9">' + escapeXml(geometry.label) + '</text>'
+        '<text x="' + geometry.labelX + '" y="' + (geometry.labelY + 2) + '" text-anchor="middle" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="9">' + escapeXml(geometry.label) + '</text>'
       : "";
     return '<g><title>' + escapeXml(hasLabel ? geometry.fullLabel || geometry.label : "Unlabeled connection from " + sourceName + " to " + targetName) + '</title><path d="' + geometry.path + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5"/><path class="edge-arrow" d="' + geometry.arrowPath + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' + labelMarkup + '</g>';
   }).join("");
@@ -139,18 +139,18 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
     const description = trimLabel(node.description || node.source || "", 34);
     const badgeX = NODE_WIDTH - 16;
     const badge = '<circle cx="' + badgeX + '" cy="15" r="7" fill="var(--export-canvas)" stroke="var(--export-border)"/><path d="M ' + (badgeX - 2) + ' 12.5 L ' + (badgeX + 2) + ' 15 L ' + (badgeX - 2) + ' 17.5 M ' + (badgeX - 1.5) + ' 12.5 L ' + (badgeX - 3.5) + ' 12.5 M ' + (badgeX - 1.5) + ' 17.5 L ' + (badgeX - 3.5) + ' 17.5" fill="none" stroke="var(--export-muted)" stroke-width=".8" stroke-linecap="round"/><circle cx="' + (badgeX - 4) + '" cy="12.5" r="1.1" fill="var(--export-muted)"/><circle cx="' + (badgeX + 3) + '" cy="15" r="1.1" fill="var(--export-muted)"/><circle cx="' + (badgeX - 4) + '" cy="17.5" r="1.1" fill="var(--export-muted)"/>';
-    let interior = '<text x="14" y="21" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="8" font-weight="700" letter-spacing=".8">' + escapeXml(trimLabel(String(node.type || "COMPONENT").toUpperCase(), 24)) + '</text>' + badge +
-      '<text x="14" y="45" fill="var(--export-foreground)" font-family="system-ui,sans-serif" font-size="12" font-weight="650">' + escapeXml(title) + '</text>' +
-      '<text x="14" y="66" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="9">' + escapeXml(description) + '</text>';
+    let interior = '<text x="14" y="21" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="8" font-weight="500">' + escapeXml(trimLabel(String(node.type || "Component"), 24)) + '</text>' + badge +
+      '<text x="14" y="45" fill="var(--export-foreground)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="12" font-weight="600">' + escapeXml(title) + '</text>' +
+      '<text x="14" y="66" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="9">' + escapeXml(description) + '</text>';
     if (node.chart) {
-      interior += '<text x="14" y="80" fill="var(--export-foreground)" font-family="system-ui,sans-serif" font-size="8" font-weight="600">' + escapeXml(trimLabel(node.chart.label, 27)) + '</text>';
-      if (node.chart.unit) interior += '<text x="' + (NODE_WIDTH - 14) + '" y="80" text-anchor="end" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="7">' + escapeXml(trimLabel(node.chart.unit, 12)) + '</text>';
+      interior += '<text x="14" y="80" fill="var(--export-foreground)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="8" font-weight="600">' + escapeXml(trimLabel(node.chart.label, 27)) + '</text>';
+      if (node.chart.unit) interior += '<text x="' + (NODE_WIDTH - 14) + '" y="80" text-anchor="end" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="7">' + escapeXml(trimLabel(node.chart.unit, 12)) + '</text>';
       const exportedChart = chartMarkup(node.chart);
       interior += exportedChart.markup;
       const contextY = exportedChart.showCategoryStrip ? 154 : 136;
       const evidenceY = exportedChart.showCategoryStrip ? 169 : 151;
-      interior += '<text x="14" y="' + contextY + '" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="6.5"><title>' + escapeXml(exportedChart.presentation.context) + '</title>' + escapeXml(trimLabel(exportedChart.presentation.context, 31)) + '</text>';
-      interior += '<text x="14" y="' + evidenceY + '" fill="var(--export-muted)" font-family="system-ui,sans-serif" font-size="7"><title>' + escapeXml(node.chart.evidence) + '</title>' + escapeXml(trimLabel("Evidence: " + node.chart.evidence, 37)) + '</text>';
+      interior += '<text x="14" y="' + contextY + '" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="6.5"><title>' + escapeXml(exportedChart.presentation.context) + '</title>' + escapeXml(trimLabel(exportedChart.presentation.context, 31)) + '</text>';
+      interior += '<text x="14" y="' + evidenceY + '" fill="var(--export-muted)" font-family="Arial,Helvetica Neue,Helvetica,sans-serif" font-size="7"><title>' + escapeXml(node.chart.evidence) + '</title>' + escapeXml(trimLabel("Evidence: " + node.chart.evidence, 37)) + '</text>';
       if (node.source) interior += '<text x="14" y="' + (exportedChart.showCategoryStrip ? 187 : 166) + '" fill="var(--export-muted)" font-family="ui-monospace,monospace" font-size="7">' + escapeXml(trimLabel(node.source, 31)) + '</text>';
     } else {
       interior += '<text x="14" y="91" fill="var(--export-muted)" font-family="ui-monospace,monospace" font-size="8">' + escapeXml(trimLabel(node.source || "", 32)) + '</text>';
@@ -162,7 +162,7 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
   const title = escapeXml(graph.project.name || "Architecture map");
   const description = escapeXml(graph.project.description || graph.project.type || "Software architecture");
   return '<?xml version="1.0" encoding="UTF-8"?>' +
-    '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-labelledby="atlas-title atlas-desc" style="--export-canvas:' + palette.canvas + ';--export-card:' + palette.card + ';--export-border:' + palette.border + ';--export-foreground:' + palette.foreground + ';--export-muted:' + palette.muted + '">' +
+    '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-labelledby="atlas-title atlas-desc" style="text-rendering:geometricPrecision;--export-canvas:' + palette.canvas + ';--export-card:' + palette.card + ';--export-border:' + palette.border + ';--export-foreground:' + palette.foreground + ';--export-muted:' + palette.muted + '">' +
     '<title id="atlas-title">' + title + '</title><desc id="atlas-desc">' + description + '</desc>' +
     '<rect width="100%" height="100%" fill="var(--export-canvas)"/><g transform="translate(' + offsetX + ' ' + offsetY + ')">' + categoryMarkup + sharedMarkup + edgeMarkup + categoryHeaders + nodeMarkup + '</g></svg>';
 }
