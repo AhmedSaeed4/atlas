@@ -83,3 +83,45 @@ test('shared snapshots support anchored pinch out without modifying the map',asy
  await page.locator('.node-card').first().tap();await expect(page.locator('#inspector')).toBeVisible();
  expect(await snapshot(page)).toBe(saved);
 });
+
+test('touch navigation holds flow motion only while moving, avoids redundant pan labels and respects manual pause',async({page})=>{
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await seed(page);
+ await expect(page.locator('.edge-beam')).toHaveCount(1);
+ await expect(page.locator('.edge-path.draw-in')).toHaveCount(0);
+ const paused=()=>page.locator('#graph').evaluate(svg=>svg.animationsPaused());
+ await expect.poll(paused).toBe(false);
+ const stored=await snapshot(page),stage=await page.locator('#graph-stage').boundingBox();
+ const p={id:1,x:stage.x+stage.width/2,y:stage.y+110};
+ const session=await page.context().newCDPSession(page);
+ try{
+  await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[p]});
+  expect(await paused()).toBe(false);
+  await page.evaluate(()=>{
+   window.panUiWrites=0;
+   window.panUiObserver=new MutationObserver(records=>window.panUiWrites+=records.length);
+   window.panUiObserver.observe(document.getElementById('graph'),{attributes:true,attributeFilter:['data-connection-detail']});
+   window.panUiObserver.observe(document.getElementById('zoom-label'),{childList:true});
+  });
+  for(let step=1;step<=8;step++)await session.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{...p,x:p.x+step*3,y:p.y+step*2}]});
+  expect(await paused()).toBe(true);
+  expect(await page.evaluate(()=>{window.panUiObserver.disconnect();return window.panUiWrites;})).toBe(0);
+  await session.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  expect(await paused()).toBe(false);
+  await page.locator('#workspace-tools-toggle').click();await page.locator('#pause-motion').click();
+  expect(await paused()).toBe(true);
+  await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[p]});
+  await session.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{...p,x:p.x+20}]});
+  await session.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  expect(await paused()).toBe(true);
+  await page.locator('#workspace-tools-toggle').click();await page.locator('#pause-motion').click();
+  expect(await paused()).toBe(false);
+  await session.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[p]});
+  await session.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{...p,x:p.x+30}]});
+  expect(await paused()).toBe(true);
+  await session.send('Input.dispatchTouchEvent',{type:'touchCancel',touchPoints:[]});
+  expect(await paused()).toBe(false);
+ }finally{await session.detach();}
+ expect(await snapshot(page)).toBe(stored);
+ await expect(page.locator('#inspector')).toBeHidden();
+});

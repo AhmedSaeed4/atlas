@@ -8,19 +8,25 @@ export function touchCamera(view, origin, current, ratio = 1) {
   };
 }
 
-export function bindGraphTouch(surface, { readCamera, writeCamera, onStart, onEmptyTap, scope }) {
+export function bindGraphTouch(surface, { readCamera, writeCamera, onStart, onEmptyTap, scope, onNavigateStart, onNavigateEnd }) {
   const pointers = new Map();
   let baseline = null, gestureScope = null, moved = false, suppressClick = false, target = null;
+  let bounds = null, navigating = false;
   const sample = () => {
-    const points = [...pointers.values()].slice(0, 2), rect = surface.getBoundingClientRect();
+    const points = [...pointers.values()].slice(0, 2), rect = bounds;
     return {
       x: points.reduce((n, p) => n + p.x, 0) / points.length - rect.left,
       y: points.reduce((n, p) => n + p.y, 0) / points.length - rect.top,
       distance: points.length === 2 ? Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y) : 0,
     };
   };
-  const rebase = () => { baseline = { point: sample(), view: { ...readCamera() } }; };
-  const cancel = () => { if (pointers.size) suppressClick = true; pointers.clear(); baseline = null; };
+  const rebase = () => { bounds = surface.getBoundingClientRect(); baseline = { point: sample(), view: { ...readCamera() } }; };
+  const finishNavigation = () => {
+    if (!navigating) return;
+    navigating = false;
+    onNavigateEnd?.();
+  };
+  const cancel = () => { if (pointers.size) suppressClick = true; pointers.clear(); baseline = null; bounds = null; finishNavigation(); };
   surface.addEventListener('pointerdown', event => {
     if (event.pointerType !== 'touch') {
       if (pointers.size) { event.preventDefault(); event.stopPropagation(); }
@@ -43,6 +49,7 @@ export function bindGraphTouch(surface, { readCamera, writeCamera, onStart, onEm
     const point = sample();
     if (!moved && Math.hypot(point.x - baseline.point.x, point.y - baseline.point.y) < 6) return;
     moved = true; suppressClick = true;
+    if (!navigating) { navigating = true; onNavigateStart?.(); }
     const ratio = pointers.size > 1 && baseline.point.distance > 0 ? point.distance / baseline.point.distance : 1;
     const next = touchCamera(baseline.view, baseline.point, point, ratio);
     writeCamera(next);
@@ -56,6 +63,8 @@ export function bindGraphTouch(surface, { readCamera, writeCamera, onStart, onEm
     if (pointers.size) rebase();
     else {
       baseline = null;
+      bounds = null;
+      finishNavigation();
       if (!moved && !cancelled && !target.closest?.('.node-card,.edge-group,.group-wire,.category-header')) onEmptyTap();
     }
     event.stopPropagation();
@@ -69,5 +78,9 @@ export function bindGraphTouch(surface, { readCamera, writeCamera, onStart, onEm
     if (suppressClick && event.detail !== 0) { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
   doc.addEventListener('visibilitychange', () => { if (doc.hidden) cancel(); });
-  return { cancel, isActive: () => pointers.size > 0 };
+  // Geometry can change when the page scrolls or the phone rotates. End this
+  // camera gesture instead of reusing bounds from the old viewport.
+  doc.addEventListener('scroll', cancel, true);
+  doc.defaultView?.addEventListener('resize', cancel);
+  return { cancel, isActive: () => pointers.size > 0, isNavigating: () => navigating };
 }
