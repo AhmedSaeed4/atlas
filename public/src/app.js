@@ -16,7 +16,7 @@ import { sameMapContext, compareGraphVersions } from "./map-update.js";
 import { createGraphGeometryCache, createFrameBatch, updateDraggedGraph, updateDraggedNodes } from "./graph-render-cache.js";
 import { renderCategoryContainers, scaleCategoryHeaders, createCategoryFramePreferences } from './map-categories.js';
 import { groupConnectionPlan } from './group-connections.js';
-import { renderGroupConnectionWires } from './group-connection-view.js';
+import { renderGroupConnectionWires, scaleGroupConnectionMarkers } from './group-connection-view.js';
 import { SAMPLE_GRAPHS } from "./samples.js";
 import { createProjectId, LIBRARY_STORAGE_KEY } from "./storage.js";
 import { createLocalLibrary, reconcileLocalLibrary } from "./local-library.js";
@@ -2842,6 +2842,8 @@ function refreshTraceStyles() {
 }
 function setViewportTransform() {
   scaleCategoryHeaders(byId('categories-layer'), transform.scale);
+  scaleGroupConnectionMarkers(byId('edges-layer'), transform.scale);
+  byId('graph').dataset.connectionDetail = transform.scale < .55 ? 'overview' : 'detail';
   byId("viewport").setAttribute("transform", "translate(" + transform.x + " " + transform.y + ") scale(" + transform.scale + ")");
   const percent = transform.scale * 100;
   byId("zoom-label").textContent = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
@@ -2935,7 +2937,15 @@ function renderMapCategories(graph, layout) {
 }
 function renderSharedConnections(graph = presentationGraph()) {
   const plan = categoryFramesEnabled ? groupConnectionPlan(graph, graphGeometry.get(graph), excludedTypes) : null;
+  const wire = currentSelectedGroupWire(graph);
+  const wireNodes = wire ? new Set(wire.edgeIndexes.flatMap(index => [graph.edges[index].source, graph.edges[index].target])) : null;
+  for (const card of byId('nodes-layer').querySelectorAll('.node-card')) {
+    card.classList.toggle('wire-endpoint', Boolean(wireNodes?.has(card.dataset.nodeId)));
+    card.classList.toggle('wire-context-muted', Boolean(wireNodes && !wireNodes.has(card.dataset.nodeId)));
+  }
+  for (const edge of byId('edges-layer').querySelectorAll('.edge-group')) edge.classList.toggle('wire-context-muted', Boolean(wireNodes));
   renderGroupConnectionWires(byId('edges-layer'), plan, {
+    scale: transform.scale,
     graph, selectedEdgeIds: new Set(currentSelectedGroupWire(graph)?.edgeIndexes.map(index => graph.edges[index].id) || [selectedEdgeId]),
     selectedNodeId, trace: traceRoutes(graph, selectedNodeId, traceMode), traceMode, focusedType,
     onSelect(wire) {

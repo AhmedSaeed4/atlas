@@ -8,7 +8,7 @@ function wireGeometry(start, end, index, obstacles, occupied = null) {
   start = { x: start.x, y: start.y }; end = { x: end.x, y: end.y };
   if (occupied?.length) {
     const left=Math.min(start.x,end.x)-180,right=Math.max(start.x,end.x)+180,top=Math.min(start.y,end.y)-180,bottom=Math.max(start.y,end.y)+180;
-    occupied = occupied.filter(([a,b])=>Math.max(a.x,b.x)>=left&&Math.min(a.x,b.x)<=right&&Math.max(a.y,b.y)>=top&&Math.min(a.y,b.y)<=bottom).slice(-8);
+    occupied = occupied.filter(([a,b])=>Math.max(a.x,b.x)>=left&&Math.min(a.x,b.x)<=right&&Math.max(a.y,b.y)>=top&&Math.min(a.y,b.y)<=bottom).slice(-32);
   }
   const bend = Math.max(36, (end.x - start.x) * .42), offset = 58 + (index % 4) * 15;
   const backwards = end.x <= start.x, routeY = Math.min(start.y, end.y) - offset - 22;
@@ -16,7 +16,11 @@ function wireGeometry(start, end, index, obstacles, occupied = null) {
   const p2 = { x: end.x - (backwards ? offset : bend), y: backwards ? routeY : end.y };
   const points = [start, p1, p2, end], routed = routeObstacleCurve(points, obstacles, false, { force: Boolean(occupied), occupied: occupied || [] });
   const midpoint = routed?.labelPoint || { x: .125 * start.x + .375 * p1.x + .375 * p2.x + .125 * end.x, y: .125 * start.y + .375 * p1.y + .375 * p2.y + .125 * end.y };
-  return { points: routed?.points || points,
+  const routedPoints = routed?.points || points, beforeEnd = routedPoints.at(-2);
+  const angle = Math.atan2(end.y - beforeEnd.y, end.x - beforeEnd.x);
+  const wings = [-.48, .48].map(rotation => ({ x: end.x - 11 * Math.cos(angle + rotation), y: end.y - 11 * Math.sin(angle + rotation) }));
+  return { points: routedPoints, arrowPoints: [wings[0], end, wings[1]],
+    arrowPath: `M ${wings[0].x} ${wings[0].y} L ${end.x} ${end.y} L ${wings[1].x} ${wings[1].y}`,
     path: routed?.path || `M ${start.x} ${start.y} C ${p1.x} ${p1.y} ${p2.x} ${p2.y} ${end.x} ${end.y}`,
     labelX: midpoint.x, labelY: midpoint.y - 9, orthogonal: Boolean(routed) };
 }
@@ -40,16 +44,34 @@ export function buildGroupConnections(graph, layout, excludedTypes = new Set()) 
     if (!bundles.has(key)) bundles.set(key, { id: 'trunk:' + key, kind: 'trunk', source, target, edgeIndexes: [] });
     bundles.get(key).edgeIndexes.push(index);
   });
-  function endpoint(node, direction) {
+  function endpoint(node, direction, bundle) {
     const point = layout.positions.get(node.id), size = layout.dimensions.get(node.id);
     const nodePort = { x: point.x + (direction === 'out' ? size.width : 0), y: point.y + size.height / 2 };
     if (!node.group) return nodePort;
-    const box = byGroup.get(node.group), id = JSON.stringify([node.group, direction]);
-    if (!ports.has(id)) ports.set(id, { id, group: node.group, direction, x: box.x + (direction === 'out' ? box.width : 0), y: box.y + CATEGORY_HEADER + (box.height - CATEGORY_HEADER) / 2 });
+    const box = byGroup.get(node.group), id = JSON.stringify([node.group, direction, bundle.id]);
+    const peer = direction === 'out' ? bundle.target : bundle.source;
+    if (!ports.has(id)) ports.set(id, { id, group: node.group, direction, wireId: bundle.id,
+      peer: peer.group || peer.label, peerY: peer.group ? byGroup.get(peer.group).y + byGroup.get(peer.group).height / 2 : layout.positions.get(peer.id).y,
+      edgeIndexes: bundle.edgeIndexes, x: box.x + (direction === 'out' ? box.width : 0), y: nodePort.y });
     return ports.get(id);
   }
   for (const bundle of bundles.values()) {
-    bundle.start = endpoint(bundle.source, 'out'); bundle.end = endpoint(bundle.target, 'in');
+    bundle.start = endpoint(bundle.source, 'out', bundle); bundle.end = endpoint(bundle.target, 'in', bundle);
+  }
+  for (const box of boxes) for (const direction of ['in', 'out']) {
+    const side = [...ports.values()].filter(port => port.group === box.name && port.direction === direction)
+      .sort((a, b) => a.peerY - b.peerY || a.id.localeCompare(b.id));
+    const top = box.y + CATEGORY_HEADER + 22, bottom = box.y + box.height - 24;
+    side.forEach((port, index) => {
+      port.maxMarkerScale = side.length > 1 ? Math.min(2.2, (bottom - top) / side.length / 20) : 2.2;
+      if (side.length > 1) port.y = top + (bottom - top) * (index + .5) / side.length;
+      else {
+        const memberIds = new Set(port.edgeIndexes.map(index => graph.edges[index][direction === 'out' ? 'source' : 'target']));
+        port.y = Math.max(top, Math.min(bottom, [...memberIds].reduce((sum, id) => sum + layout.positions.get(id).y + layout.dimensions.get(id).height / 2, 0) / memberIds.size));
+      }
+    });
+  }
+  for (const bundle of bundles.values()) {
     bundle.label = bundle.edgeIndexes.length > 1 ? bundle.edgeIndexes.length + ' connections' : '';
     bundle.title = (bundle.source.group || bundle.source.label) + ' → ' + (bundle.target.group || bundle.target.label);
     for (const index of bundle.edgeIndexes) {
@@ -57,12 +79,13 @@ export function buildGroupConnections(graph, layout, excludedTypes = new Set()) 
       for (const [id, direction] of [[edge.source, 'out'], [edge.target, 'in']]) {
         const node = nodes.get(id);
         if (!node.group) continue;
-        const key = JSON.stringify([id, direction]);
+        const key = JSON.stringify([bundle.id, id, direction]);
         if (!branches.has(key)) {
           const point = layout.positions.get(id), size = layout.dimensions.get(id);
           const nodePort = { x: point.x + (direction === 'out' ? size.width : 0), y: point.y + size.height / 2 };
-          const port = endpoint(node, direction);
+          const port = endpoint(node, direction, bundle);
           branches.set(key, { id: 'branch:' + key, kind: 'branch', nodeId: id, group: node.group, direction,
+            bundleId: bundle.id,
             start: direction === 'out' ? nodePort : port, end: direction === 'out' ? port : nodePort,
             edgeIndexes: [], title: node.label + (direction === 'out' ? ' → group output' : ' ← group input') });
         }
@@ -78,6 +101,12 @@ export function buildGroupConnections(graph, layout, excludedTypes = new Set()) 
       ? nodeObstacles.filter(box => box.group === wire.group && box.id !== wire.nodeId)
       : [...boxes.map(box => rect(box, box.name === wire.source.group || box.name === wire.target.group ? 0 : 14)),
         ...nodeObstacles.filter(box => !box.group && box.id !== wire.source.id && box.id !== wire.target.id)];
+    if (wire.kind === 'branch') {
+      const box = byGroup.get(wire.group), left = box.x, right = box.x + box.width, top = box.y + CATEGORY_HEADER - 8, bottom = box.y + box.height;
+      obstacles.push({ left: left - 10000, right: left, top: top - 10000, bottom: bottom + 10000 },
+        { left: right, right: right + 10000, top: top - 10000, bottom: bottom + 10000 },
+        { left, right, top: top - 10000, bottom: top }, { left, right, top: bottom, bottom: bottom + 10000 });
+    }
     wire.geometry = wireGeometry(wire.start, wire.end, index, obstacles, wire.kind === 'trunk' ? occupied : null);
     if (wire.kind === 'trunk' && wire.geometry.orthogonal) {
       const points = wire.geometry.points;

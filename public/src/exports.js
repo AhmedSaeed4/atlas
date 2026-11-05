@@ -98,8 +98,13 @@ export function buildSvg(graph, theme = "dark", { categoryFrames = false } = {})
       const edge = graph.edges[index]; return edge.source + ' → ' + edge.target + ': ' + (edge.label || edge.type || 'connects');
     }).join('; ');
     return '<g class="group-wire" data-kind="' + wire.kind + '"><title>' + escapeXml(wire.title + '. ' + relationships) + '</title>' +
-      '<path d="' + geometry.path + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5" stroke-opacity="' + (wire.kind === 'branch' ? '.65' : '1') + '"/>' + label + '</g>';
-  }).join('') + (shared?.ports || []).map(port => '<circle class="group-port" cx="' + port.x + '" cy="' + port.y + '" r="5" fill="var(--export-card)" stroke="' + palette.accent + '" stroke-width="1.6"><title>' + escapeXml(port.group + ' ' + port.direction) + '</title></circle>').join('');
+      (wire.kind === 'trunk' ? '<path class="wire-casing" d="' + geometry.path + '" fill="none" stroke="var(--export-canvas)" stroke-width="6" stroke-linejoin="round"/>' : '') +
+      '<path d="' + geometry.path + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5" stroke-opacity="' + (wire.kind === 'branch' ? '.65' : '1') + '"/>' +
+      '<path class="edge-arrow" d="' + geometry.arrowPath + '" fill="none" stroke="var(--export-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' + label + '</g>';
+  }).join('') + (shared?.ports || []).map(port => '<g transform="translate(' + port.x + ' ' + port.y + ')"><title>' + escapeXml(port.group + ' ' + port.direction + ': ' + port.peer) + '</title>' +
+    '<rect class="group-port" x="-7" y="-9" width="14" height="18" rx="4" fill="var(--export-canvas)" stroke="var(--export-muted)"/>' +
+    '<path d="M -2 -3 L 2 0 L -2 3" fill="none" stroke="var(--export-foreground)" stroke-width="1.3"/>' +
+    '<text x="' + (port.direction === 'in' ? 14 : -14) + '" y="-6" text-anchor="' + (port.direction === 'in' ? 'start' : 'end') + '" fill="var(--export-muted)" font-family="Arial,Helvetica,sans-serif" font-size="8">' + (port.direction === 'in' ? 'IN' : 'OUT') + '</text></g>').join('');
   const categoryMarkup = categories.map(box =>
     '<g class="map-category" transform="translate(' + box.x + ' ' + box.y + ')"><title>' + escapeXml(box.name) + '</title>' +
     '<rect width="' + box.width + '" height="' + box.height + '" rx="22" fill="var(--export-card)" fill-opacity=".28" stroke="var(--export-border)"/></g>'

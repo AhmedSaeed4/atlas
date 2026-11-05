@@ -70,7 +70,9 @@ test('normal maps stay normal and frames share external wires while keeping actu
   const bundled = page.locator('.group-wire[data-kind="trunk"]').filter({ hasText: '2 connections' });
   await expect(bundled).toHaveCount(1);
   expect(JSON.parse(await bundled.getAttribute('data-edge-ids'))).toEqual(['web-api', 'mobile-api']);
+  await page.locator('[data-edge-id="api-worker"]').focus();
   await expect(page.locator('[data-edge-id="api-worker"] .edge-label')).toHaveCSS('visibility', 'visible');
+  await page.locator('[data-edge-id="api-worker"]').evaluate(element => element.blur());
   await expect(page.locator('.category-header[role="button"]')).toHaveCount(2);
   await expect(page.locator('[data-category-header="Experience"]')).toHaveAttribute('aria-label', /Move category Experience/);
   await page.getByRole('button', { name: 'Explore', exact: true }).click();
@@ -94,7 +96,7 @@ test('a single-node category receives a shared boundary input then branches to i
     const node = document.querySelector('.node-card[data-node-id="db"]');
     const position = node.transform.baseVal.consolidate().matrix;
     const height = Number(node.querySelector('.card-bg').getAttribute('height'));
-    const branch = [...document.querySelectorAll('.group-wire[data-kind="branch"]')].find(element => element.dataset.wireId === 'branch:' + JSON.stringify(['db', 'in']));
+    const branch = document.querySelector('.group-wire[data-kind="branch"][data-node-id="db"][data-direction="in"]');
     const path = branch.querySelector('.edge-path');
     const end = path.getPointAtLength(path.getTotalLength());
     return Math.abs(end.x - position.e) < .1 && Math.abs(end.y - position.f - height / 2) < .1;

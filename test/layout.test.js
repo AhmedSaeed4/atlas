@@ -171,3 +171,18 @@ test("parallel self-loops and backward edges remain distinct beyond four routes"
   assert.ok(Object.values(bounds).every(Number.isFinite));
   assert.ok(bounds.height < 500);
 });
+
+test('automatic ordering untangles reversed neighbour order in plain and framed maps without changing topology', () => {
+  const graph = { nodes: ['a', 'b', 'c', 'x', 'y', 'z'].map(id => ({ id, label: id, type: 'Service', group: 'Category ' + id })),
+    edges: [{ source: 'a', target: 'z' }, { source: 'b', target: 'y' }, { source: 'c', target: 'x' }] };
+  const before = JSON.stringify(graph);
+  for (const categoryFrames of [false, true]) {
+    const { positions } = layoutGraph(graph, { categoryFrames });
+    for (let i = 0; i < graph.edges.length; i++) for (let j = i + 1; j < graph.edges.length; j++) {
+      const a = graph.edges[i], b = graph.edges[j];
+      assert.ok((positions.get(a.source).y - positions.get(b.source).y) * (positions.get(a.target).y - positions.get(b.target).y) > 0);
+    }
+    assert.deepEqual(layoutGraph(graph, { categoryFrames }).positions, positions);
+  }
+  assert.equal(JSON.stringify(graph), before);
+});

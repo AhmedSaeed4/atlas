@@ -78,8 +78,8 @@
   .edge-path.connected{animation:none}
 }
 
-/* Keep the circular connection ports; connector arrowheads are owner-disabled. */
-.edge-arrow { display: none; }
+/* Explicit arrow paths make relationship direction visible in both map modes. */
+.edge-arrow { pointer-events: none; }
 .edge-path { marker-end: none; }
 
 .incoming-share-error{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 30px 12px;padding:12px 14px;border:1px solid #714244;border-radius:8px;background:#301d20;color:#ffc0bb}

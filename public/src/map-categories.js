@@ -5,8 +5,25 @@ export const CATEGORY_HEADER = 64;
 export const CATEGORY_MIN_WIDTH = 292;
 const categoryHeaders = new WeakMap();
 
+export function categoryPortHeights(graph, excludedTypes = new Set()) {
+  const nodes = new Map(graph.nodes.filter(node => !excludedTypes.has(node.type)).map(node => [node.id, node]));
+  const counts = new Map();
+  const owner = node => JSON.stringify([node.group ? 'group' : 'node', node.group || node.id]);
+  for (const edge of graph.edges) {
+    const source = nodes.get(edge.source), target = nodes.get(edge.target);
+    if (!source || !target || owner(source) === owner(target)) continue;
+    for (const [node, peer, direction] of [[source, target, 'out'], [target, source, 'in']]) {
+      if (!node.group || node.viewGroup) continue;
+      if (!counts.has(node.group)) counts.set(node.group, { in: new Set(), out: new Set() });
+      counts.get(node.group)[direction].add(owner(peer));
+    }
+  }
+  return new Map([...counts].map(([name, sides]) => [name, CATEGORY_HEADER + 48 + Math.max(sides.in.size, sides.out.size) * 28]));
+}
+
 export function categoryBounds(graph, positions, dimensions, excludedTypes = new Set()) {
   const groups = new Map();
+  const portHeights = categoryPortHeights(graph, excludedTypes);
   for (const node of graph.nodes) {
     if (!node.group || node.viewGroup) continue;
     if (!groups.has(node.group)) groups.set(node.group, { name: node.group, members: [], total: 0 });
@@ -21,7 +38,7 @@ export function categoryBounds(graph, positions, dimensions, excludedTypes = new
     const y = Math.min(...group.members.map(node => node.y)) - CATEGORY_HEADER;
     const right = Math.max(...group.members.map(node => node.x + node.width)) + CATEGORY_PADDING;
     const bottom = Math.max(...group.members.map(node => node.y + node.height)) + CATEGORY_PADDING;
-    return { ...group, x, y, width: Math.max(CATEGORY_MIN_WIDTH, right - x), height: bottom - y };
+    return { ...group, x, y, width: Math.max(CATEGORY_MIN_WIDTH, right - x), height: Math.max(bottom - y, portHeights.get(group.name) || 0) };
   });
 }
 
@@ -32,13 +49,16 @@ export function categoryTitle(name, width, fontSize = 12) {
 
 export function scaleCategoryHeaders(layer, scale) {
   layer.dataset.scale = String(scale);
-  const fontSize = Math.min(22, Math.max(12, 10 / Math.max(.05, scale)));
+  const fontSize = Math.min(36, Math.max(12, 11 / Math.max(.05, scale)));
   for (const group of layer.children) {
     const header = categoryHeaders.get(group);
     if (!header) continue;
     const label = header.querySelector('.category-name');
     label.style.fontSize = fontSize + 'px';
     label.textContent = categoryTitle(group.dataset.category, Number(group.dataset.width), fontSize);
+    label.setAttribute('y', Math.max(30, fontSize + 10));
+    header.querySelector('.category-header-hit').setAttribute('height', Math.max(34, fontSize + 14));
+    header.querySelector('.category-count').setAttribute('y', Math.max(30, fontSize + 10));
     header.querySelector('.category-count').style.fontSize = Math.min(16, Math.max(10, 8 / Math.max(.05, scale))) + 'px';
   }
 }
