@@ -138,6 +138,7 @@ let localSyncReady = false;
 let localSyncScheduled = false;
 let localSyncAfterWrite = false;
 let transform = { x: 0, y: 0, scale: 1 };
+let renderedViewportScale = null;
 let graphTouch = null;
 let viewMode = "graph";
 const CLOUD_ASSOCIATIONS_KEY = "atlas.online.associations.v1";
@@ -2840,13 +2841,21 @@ function refreshTraceStyles() {
   }
   renderSharedConnections(graph);
 }
-function setViewportTransform() {
-  scaleCategoryHeaders(byId('categories-layer'), transform.scale);
-  scaleGroupConnectionMarkers(byId('edges-layer'), transform.scale);
-  byId('graph').dataset.connectionDetail = transform.scale < .55 ? 'overview' : 'detail';
-  byId("viewport").setAttribute("transform", "translate(" + transform.x + " " + transform.y + ") scale(" + transform.scale + ")");
+function setViewportTransform(refreshDetails = false) {
+  if (refreshDetails || renderedViewportScale !== transform.scale) {
+    if (categoryFramesEnabled) {
+      scaleCategoryHeaders(byId('categories-layer'), transform.scale);
+      scaleGroupConnectionMarkers(byId('edges-layer'), transform.scale);
+    }
+    renderedViewportScale = transform.scale;
+  }
+  const detail = transform.scale < .55 ? 'overview' : 'detail';
+  if (byId('graph').dataset.connectionDetail !== detail) byId('graph').dataset.connectionDetail = detail;
+  const viewport = byId('viewport'), value = "translate(" + transform.x + " " + transform.y + ") scale(" + transform.scale + ")";
+  if (viewport.getAttribute('transform') !== value) viewport.setAttribute('transform', value);
   const percent = transform.scale * 100;
-  byId("zoom-label").textContent = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
+  const label = percent < 1 ? percent.toFixed(1) + "%" : Math.round(percent) + "%";
+  if (byId('zoom-label').textContent !== label) byId('zoom-label').textContent = label;
 }
 function stopFitAnimation({ retainRestore = false } = {}) {
   if (!retainRestore) pendingGraphRestore = null;
@@ -3306,8 +3315,8 @@ function renderGraph() {
   renderSharedConnections(graph);
   mountedGraph=graph;mountedCards=nodeCards;mountedEdges=edgeGroups;
   animateStructure = false;
-  setViewportTransform();
-  if (resumeSvgTimeline) { try { svgTimeline.unpauseAnimations(); } catch {} }
+  setViewportTransform(true);
+  if (resumeSvgTimeline) syncGraphMotion();
 }
 function inspectorEdgeContext(edge) {
   const project = activeProject();
@@ -5377,14 +5386,18 @@ function updateMotionButton() {
   button.setAttribute("aria-pressed", String(motionPaused));
   button.title = motionPaused ? "Resume graph animations" : "Pause graph animations";
 }
+function syncGraphMotion() {
+  const svg = byId('graph');
+  try {
+    if (motionPaused || document.hidden || viewMode !== 'graph' || graphTouch?.isNavigating()) svg.pauseAnimations();
+    else svg.unpauseAnimations();
+  } catch {}
+}
 function toggleMotion() {
   motionPaused = !motionPaused;
   const svg = byId("graph");
   svg.classList.toggle("motion-paused", motionPaused);
-  try {
-    if (motionPaused) svg.pauseAnimations();
-    else svg.unpauseAnimations();
-  } catch {}
+  syncGraphMotion();
   updateMotionButton();
 }
 function attachEvents() {
@@ -5708,6 +5721,8 @@ function attachEvents() {
     readCamera: () => transform,
     writeCamera: value => { transform = value; setViewportTransform(); },
     onStart: () => { cancelActiveGesture(); stopFitAnimation(); hideGraphContextMenu(); },
+    onNavigateStart: syncGraphMotion,
+    onNavigateEnd: syncGraphMotion,
     scope: () => viewMode === 'graph' ? currentGraph() : null,
     onEmptyTap: () => {
       selectedNodeId = null; selectedEdgeId = null; touchSelectedEdge = null;
@@ -5774,12 +5789,7 @@ function attachEvents() {
       graphFullscreen.handleKeydown(event);
     }
   });
-  document.addEventListener("visibilitychange", () => {
-    try {
-      if (document.hidden || motionPaused) graphSvg.pauseAnimations();
-      else graphSvg.unpauseAnimations();
-    } catch {}
-  });
+  document.addEventListener("visibilitychange", syncGraphMotion);
 }
 function syncExplorationScope() {
   const scope = editHistoryScope();
