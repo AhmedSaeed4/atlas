@@ -1,4 +1,5 @@
-import { categoryBounds, CATEGORY_PADDING, CATEGORY_HEADER, CATEGORY_MIN_WIDTH } from './map-categories.js';
+import { categoryBounds, categoryPortHeights, CATEGORY_PADDING, CATEGORY_HEADER, CATEGORY_MIN_WIDTH } from './map-categories.js';
+import { orderLayoutColumns, connectedBlockOrder, layoutConnectionCost } from './layout-order.js';
 
 export const NODE_WIDTH = 204;
 export const NODE_HEIGHT = 108;
@@ -92,13 +93,17 @@ function layoutPlain(graph, dimensions = new Map(graph.nodes.map(node => [node.i
     if (!columns.has(rank)) columns.set(rank, []);
     columns.get(rank).push(node);
   }
-  const positions = new Map();
-  let columnX = 0;
-  for (const [, items] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
+  for (const items of columns.values()) {
     items.sort((a, b) => {
       const byGroup = (a.group || a.type).localeCompare(b.group || b.type);
       return byGroup || a.label.localeCompare(b.label);
     });
+  }
+  orderLayoutColumns(columns, edges);
+  const positions = new Map();
+  let columnX = 0;
+  for (const [, columnItems] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
+    const items = wrapColumns ? connectedBlockOrder(columnItems, edges) : columnItems;
     // Independent/cyclic category blocks can share a rank. Wrap those blocks
     // into balanced columns rather than building a very tall, unreadable stack.
     const targetHeight = wrapColumns && items.length > 3 ? Math.max(Math.max(...items.map(node => dimensions.get(node.id).height)) * 2 + rowGap, Math.sqrt(items.reduce((area, node) => {
@@ -137,6 +142,7 @@ export function layoutGraph(graph, { categoryFrames = false } = {}) {
   if (!categoryFrames) return layoutPlain(graph);
   if (!graph.nodes.some(node => node.group && !node.viewGroup)) return layoutPlain({ ...graph, nodes: graph.nodes.map(node => ({ ...node, position: node.framePosition || node.position })) }, undefined, { wrapColumns: graph.nodes.some(node => node.viewGroup) });
   const dimensions = new Map(graph.nodes.map(node => [node.id, nodeDimensions(node)]));
+  const portHeights = categoryPortHeights(graph);
   const buckets = new Map(), membership = new Map(), blocks = [], sizes = new Map(), interiors = new Map();
   for (const node of graph.nodes) {
     const key = node.group && !node.viewGroup ? 'category:' + node.group : 'node:' + node.id;
@@ -151,12 +157,13 @@ export function layoutGraph(graph, { categoryFrames = false } = {}) {
     const ids = new Set(members.map(node => node.id));
     const inner = layoutPlain({ nodes: members.map(node => ({ ...node, position: undefined })), edges: graph.edges.filter(edge => ids.has(edge.source) && ids.has(edge.target)) }, dimensions, { maxColumns: 3, columnGap: 100, rowGap: 48 });
     interiors.set(id, inner);
-    sizes.set(id, { width: Math.max(CATEGORY_MIN_WIDTH, inner.bounds.width + CATEGORY_PADDING * 2), height: inner.bounds.height + CATEGORY_HEADER + CATEGORY_PADDING });
+    sizes.set(id, { width: Math.max(CATEGORY_MIN_WIDTH, inner.bounds.width + CATEGORY_PADDING * 2), height: Math.max(inner.bounds.height + CATEGORY_HEADER + CATEGORY_PADDING, portHeights.get(members[0].group) || 0) });
   }
   const edges = graph.edges.map(edge => ({ source: membership.get(edge.source), target: membership.get(edge.target) })).filter(edge => edge.source && edge.target && edge.source !== edge.target);
   const options = { maxColumns: blocks.length > 8 ? 4 : Infinity, rowGap: 144, columnGap: 208, wrapColumns: true, balancedRanks: true };
   const candidates = (blocks.length > 8 ? [.7, 1.4, 2.8] : [.7]).map(wrapHeightFactor => layoutPlain({ nodes: blocks, edges }, sizes, { ...options, wrapHeightFactor }));
-  const score = ({ bounds }) => Math.max(bounds.width / 1.65, bounds.height) + bounds.width * bounds.height / 200000;
+  const score = candidate => Math.max(candidate.bounds.width / 1.65, candidate.bounds.height)
+    + candidate.bounds.width * candidate.bounds.height / 200000 + layoutConnectionCost(candidate, edges);
   const outer = candidates.sort((a, b) => score(a) - score(b))[0];
   const positions = new Map();
   for (const [id, members] of buckets) {

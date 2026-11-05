@@ -99,3 +99,37 @@ test('external trunk avoids an unrelated frame and both endpoint frame interiors
   assert.ok(trunk.geometry.path.includes(' Q '));
   for (let i = 1; i < trunk.geometry.points.length; i++) assert.equal(segmentCrossesRectangle(trunk.geometry.points[i - 1], trunk.geometry.points[i], { left: 386, right: 718, top: 36, bottom: 272 }), false);
 });
+
+test('different counterpart categories have distinct terminals and preserve exact member-to-member relationships', () => {
+  const graph = fixture();
+  graph.edges.push({ id: 'direct', source: 'mobile', target: 'db', label: 'reads' });
+  const before = JSON.stringify(graph), plan = buildGroupConnections(graph, layoutGraph(graph, { categoryFrames: true }));
+  const processingPorts = plan.ports.filter(port => port.group === 'Processing' && port.direction === 'out');
+  assert.equal(processingPorts.length, 2);
+  assert.notEqual(processingPorts[0].y, processingPorts[1].y);
+  assert.notEqual(processingPorts[0].wireId, processingPorts[1].wireId);
+  const storeInput = plan.ports.filter(port => port.group === 'Storage' && port.direction === 'in');
+  assert.equal(storeInput.length, 2);
+  const branches = plan.wires.filter(wire => wire.nodeId === 'db');
+  assert.equal(branches.length, 2);
+  assert.deepEqual(branches.map(wire => wire.edgeIndexes).flat().sort(), [3, 6]);
+  for (const wire of plan.wires) {
+    assert.equal(wire.geometry.arrowPoints[1].x, wire.end.x);
+    assert.equal(wire.geometry.arrowPoints[1].y, wire.end.y);
+    assert.ok(wire.geometry.arrowPoints.every(point => Number.isFinite(point.x) && Number.isFinite(point.y)));
+  }
+  const svg = buildSvg(graph, 'light', { categoryFrames: true });
+  for (const wire of plan.wires) assert.ok(svg.includes(wire.geometry.arrowPath));
+  assert.ok(svg.includes('class="wire-casing"'));
+  assert.equal(JSON.stringify(graph), before);
+});
+
+test('a high-degree singleton reserves enough frame space for separately readable terminals', () => {
+  const graph = { nodes: Array.from({ length: 13 }, (_, index) => ({ id: 'n' + index, label: 'Service ' + index, type: 'Service', group: 'Group ' + index })),
+    edges: Array.from({ length: 12 }, (_, index) => ({ source: 'n0', target: 'n' + (index + 1) })) };
+  const before = JSON.stringify(graph), layout = layoutGraph(graph, { categoryFrames: true }), plan = buildGroupConnections(graph, layout);
+  const ports = plan.ports.filter(port => port.group === 'Group 0').sort((a, b) => a.y - b.y);
+  assert.equal(ports.length, 12);
+  for (let i = 1; i < ports.length; i++) assert.ok(ports[i].y - ports[i - 1].y >= 28);
+  assert.equal(JSON.stringify(graph), before);
+});

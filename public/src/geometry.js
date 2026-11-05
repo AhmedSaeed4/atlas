@@ -115,8 +115,10 @@ export function graphBounds(graph, positions, nodeSizes = null, routing = undefi
   }
   const routingLanes = edgeRoutingLanes(graph.edges);
   const shared = categoryFrames ? buildGroupConnections(graph, { positions, dimensions: sizes }) : null;
+  for (const port of shared?.ports || []) { include(port.x - 8, port.y - 10); include(port.x + 8, port.y + 10); }
   for (const wire of shared?.wires || []) {
     for (const point of wire.geometry.points) include(point.x, point.y);
+    for (const point of wire.geometry.arrowPoints) include(point.x, point.y);
     if (wire.kind === 'trunk' && wire.label) {
       const width = wire.label.length * 5.3 + 18;
       include(wire.geometry.labelX - width / 2, wire.geometry.labelY - 10);

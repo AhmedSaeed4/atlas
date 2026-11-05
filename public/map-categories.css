@@ -18,7 +18,9 @@
 .category-frame-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--atlas-border); border-radius: 10px; color: var(--atlas-foreground); font-size: 11px; }
 .category-frame-summary-count { color: var(--atlas-muted); font: 10px ui-monospace, monospace; }
 .group-wire { cursor: pointer; }
-.group-wire .edge-path { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.group-wire .edge-path { fill: none; stroke-width: 1.1; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.group-wire .wire-casing { fill: none; stroke: var(--atlas-graph-canvas); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; vector-effect: non-scaling-stroke; }
+.group-wire .edge-arrow { fill: none; stroke-width: 1.15; vector-effect: non-scaling-stroke; pointer-events: none; }
 .group-wire[data-kind="branch"] .edge-path { stroke-opacity: .65; }
 .group-wire .edge-label { font: 9px system-ui, sans-serif; text-anchor: middle; fill: var(--atlas-muted); }
 .group-wire .edge-label-bg { fill: var(--atlas-card); stroke: var(--atlas-border); stroke-width: .7; }
@@ -26,7 +28,17 @@
 .group-wire.selected .edge-path, .group-wire:focus-visible .edge-path, .group-wire:hover .edge-path { stroke: var(--atlas-accent); stroke-opacity: 1; stroke-width: 2; }
 .group-wire.selected .edge-label-bg, .group-wire:focus-visible .edge-label-bg { stroke: var(--atlas-accent); }
 .group-wire:focus { outline: none; }
-.group-port { fill: var(--atlas-card); stroke: var(--atlas-accent); stroke-width: 1.6; }
+.group-port { fill: var(--atlas-graph-canvas); stroke: var(--atlas-muted); stroke-width: 1; }
+.group-port-direction { fill: none; stroke: var(--atlas-foreground); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; }
+.group-port-label { fill: var(--atlas-muted); font: 8px Arial, Helvetica, sans-serif; letter-spacing: .3px; }
+.group-terminal.is-active .group-port, .group-wire.selected .edge-arrow, .group-wire:hover .edge-arrow, .group-wire:focus-visible .edge-arrow { stroke: var(--atlas-accent); }
+.group-terminal.is-active .group-port-direction, .group-terminal.is-active .group-port-label { stroke: none; fill: var(--atlas-accent); }
+.group-terminal.is-active .group-port-direction { fill: none; stroke: var(--atlas-accent); }
+#graph[data-connection-detail="overview"] .edge-group:not(.selected):not(.trace-label):not(:hover):not(:focus) :is(.edge-label, .edge-label-bg),
+#graph[data-connection-detail="overview"] .group-wire:not(.selected):not(.trace-label):not(:hover):not(:focus) :is(.edge-label, .edge-label-bg) { visibility: hidden; }
+#graph[data-connection-detail="overview"] .group-terminal:not(.is-active) .group-port-label { visibility: hidden; }
+.node-card.wire-endpoint .card-bg { stroke: var(--atlas-accent); stroke-width: 1.6; }
+.node-card.wire-context-muted, .edge-group.wire-context-muted { opacity: .22; }
 .group-relationship-list { display: grid; gap: 8px; margin-top: 16px; }
 .group-relationship { display: grid; gap: 5px; width: 100%; padding: 12px; border: 1px solid var(--atlas-border); border-radius: 12px; background: var(--atlas-canvas); color: var(--atlas-foreground); text-align: left; }
 .group-relationship strong { font-size: 11px; font-weight: 600; overflow-wrap: anywhere; }
